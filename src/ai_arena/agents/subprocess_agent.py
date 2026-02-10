@@ -91,16 +91,19 @@ class SubprocessAgent:
             line = self._stdout.readline()
             if not line:
                 raise RuntimeError("bot stdout closed")
+            line = line.strip()
+            if not line:
+                continue
             try:
                 resp = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"bot wrote non-JSON: {line!r}") from e
+            except json.JSONDecodeError:
+                # Allow debug logging on stdout; only JSON objects with {"type":"move"} matter.
+                continue
 
-            if resp.get("type") != "move":
+            if not isinstance(resp, dict) or resp.get("type") != "move":
                 # Ignore unknown message types to keep protocol extensible.
                 continue
 
             if "move" not in resp:
                 raise ValueError(f"bot move message missing 'move': {resp!r}")
             return resp["move"]
-

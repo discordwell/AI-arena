@@ -92,8 +92,37 @@ def play_match(
             return result
 
         t0 = time.perf_counter()
-        move = agent.select_move(game, state, player, legal)
-        ms = (time.perf_counter() - t0) * 1000.0
+        try:
+            move = agent.select_move(game, state, player, legal)
+            ms = (time.perf_counter() - t0) * 1000.0
+        except TimeoutError as e:
+            ms = (time.perf_counter() - t0) * 1000.0
+            history.append(MoveRecord(turn=turn, player=player, move=None, ms=ms, note=f"timeout:{e}"))
+            result = MatchResult(
+                game=game.name,
+                winner=1 - player,
+                reason="timeout",
+                turns=turn - 1,
+                move_history=history,
+            )
+            if log_path:
+                _write_log(log_path, game, result, state)
+            return result
+        except Exception as e:
+            ms = (time.perf_counter() - t0) * 1000.0
+            history.append(
+                MoveRecord(turn=turn, player=player, move=None, ms=ms, note=f"agent_error:{type(e).__name__}:{e}")
+            )
+            result = MatchResult(
+                game=game.name,
+                winner=1 - player,
+                reason="agent_error",
+                turns=turn - 1,
+                move_history=history,
+            )
+            if log_path:
+                _write_log(log_path, game, result, state)
+            return result
 
         if move not in legal:
             history.append(MoveRecord(turn=turn, player=player, move=move, ms=ms, note="illegal_move"))
@@ -138,4 +167,3 @@ def _write_log(path: Path, game: Game, result: MatchResult, final_state: JSONVal
         "final_render": game.render(final_state),
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
