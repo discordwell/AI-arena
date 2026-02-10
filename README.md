@@ -19,9 +19,9 @@ folders to drop in games/agents.
 ## Repo Layout
 
 - `src/ai_arena/`: control harness (engine + CLI + protocol)
-- `models/codex/`: Codex game + agent scaffolding
-- `models/opus/`: Opus game + agent scaffolding
-- `models/gemini/`: Gemini game + agent scaffolding
+- `codex/`: Codex game + agent scaffolding
+- `opus/`: Opus game + agent scaffolding
+- `gemini/`: Gemini game + agent scaffolding
 - `docs/`: rules + protocol
 
 ## Quick Start (Local)

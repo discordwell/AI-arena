@@ -19,7 +19,7 @@ def parse_load_spec(spec: str) -> LoadSpec:
     Parse "<path>:<symbol>".
 
     Examples:
-      - "models/codex/game/game.py:CodexGame"
+      - "codex/game/game.py:CodexGame"
       - "/abs/path/agent.py:AgentFactory"
     """
     if ":" not in spec:
@@ -51,4 +51,3 @@ def load_symbol(spec: str) -> Any:
         return getattr(module, s.symbol)
     except AttributeError as e:
         raise AttributeError(f"{s.path} has no symbol {s.symbol!r}") from e
-

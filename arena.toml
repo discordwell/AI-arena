@@ -13,15 +13,14 @@ prime_pause = false
 [[competitors]]
 id = "codex"
 home_game = "tictactoe"
-agent = "models/codex/agent/agent.py:CodexAgent"
+agent = "codex/agent/agent.py:CodexAgent"
 
 [[competitors]]
 id = "opus"
 home_game = "tictactoe"
-agent = "models/opus/agent/agent.py:OpusAgent"
+agent = "opus/agent/agent.py:OpusAgent"
 
 [[competitors]]
 id = "gemini"
 home_game = "tictactoe"
-agent = "models/gemini/agent/agent.py:GeminiAgent"
-
+agent = "gemini/agent/agent.py:GeminiAgent"
