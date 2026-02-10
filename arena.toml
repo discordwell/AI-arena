@@ -1,0 +1,27 @@
+# Tournament config (edit me).
+#
+# Specs can be:
+# - built-in names (e.g. "tictactoe")
+# - "<path>:<symbol>" to a Python class or zero-arg factory function
+# - agents can also be "subprocess:<cmd...>" for JSONL bots (see docs/protocol.md)
+
+neutral_game = "tictactoe"
+rounds = 1
+swap_starts = false
+prime_pause = false
+
+[[competitors]]
+id = "codex"
+home_game = "tictactoe"
+agent = "models/codex/agent/agent.py:CodexAgent"
+
+[[competitors]]
+id = "opus"
+home_game = "tictactoe"
+agent = "models/opus/agent/agent.py:OpusAgent"
+
+[[competitors]]
+id = "gemini"
+home_game = "tictactoe"
+agent = "models/gemini/agent/agent.py:GeminiAgent"
+

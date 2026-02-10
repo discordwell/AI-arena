@@ -33,6 +33,7 @@ python -m pip install -e ".[dev]"
 
 ai-arena list-games
 ai-arena play tictactoe --p0 human --p1 random
+ai-arena tournament --config arena.toml
 ```
 
 ## Add Your Game / Agent
@@ -46,4 +47,3 @@ ai-arena play /abs/path/to/game.py:MyGame \
 ```
 
 For cross-language agents, use the JSONL subprocess protocol in `docs/protocol.md`.
-

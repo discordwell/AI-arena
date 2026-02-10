@@ -8,6 +8,7 @@ from typing import Any
 from .engine import play_match
 from .games.tictactoe import TicTacToe
 from .loading import load_symbol
+from .tournament import load_tournament_parser
 
 
 def _builtin_games() -> dict[str, Any]:
@@ -57,15 +58,21 @@ def cmd_play(args: argparse.Namespace) -> int:
     a1 = _load_agent(args.p1)
 
     log_path = Path(args.log).expanduser().resolve() if args.log else None
-    result = play_match(game, a0, a1, prime_pause=args.prime_pause, log_path=log_path)
+    try:
+        result = play_match(game, a0, a1, prime_pause=args.prime_pause, log_path=log_path)
 
-    print(f"game: {result.game}")
-    print(f"winner: {result.winner}")
-    print(f"reason: {result.reason}")
-    print(f"turns: {result.turns}")
-    if log_path:
-        print(f"log: {log_path}")
-    return 0
+        print(f"game: {result.game}")
+        print(f"winner: {result.winner}")
+        print(f"reason: {result.reason}")
+        print(f"turns: {result.turns}")
+        if log_path:
+            print(f"log: {log_path}")
+        return 0
+    finally:
+        for a in (a0, a1):
+            close = getattr(a, "close", None)
+            if callable(close):
+                close()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_play.add_argument("--log", help="Write JSON match log to this path")
     p_play.set_defaults(func=cmd_play)
 
+    load_tournament_parser(sub)
+
     return p
 
 
@@ -94,4 +103,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
