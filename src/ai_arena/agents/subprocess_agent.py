@@ -4,7 +4,7 @@ import json
 import selectors
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TextIO
 
 from ..game import Game, PlayerId
@@ -23,6 +23,10 @@ class SubprocessAgent:
     command: list[str]
     name: str = "subprocess"
     timeout_s: float = 3600.0  # default: up to an hour per turn (matches the spec)
+    _proc: subprocess.Popen[str] = field(init=False, repr=False)
+    _stdin: TextIO = field(init=False, repr=False)
+    _stdout: TextIO = field(init=False, repr=False)
+    _sel: selectors.BaseSelector = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._proc = subprocess.Popen(
