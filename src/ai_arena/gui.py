@@ -107,70 +107,211 @@ def launch_gui(args: argparse.Namespace) -> int:
         raise RuntimeError("Tkinter is required for ai-arena gui") from e
 
     class SkysummitBoard(ttk.Frame):
-        def __init__(self, master: Any, *, on_click: Callable[[int], None]) -> None:
-            super().__init__(master)
-            self._on_click = on_click
-            self._buttons: list[tk.Button] = []
+        """
+        Canvas board with mouse-based interactions:
+        - click cells
+        - drag a worker and drop on destination cell
+        """
 
-            for r in range(5):
-                self.rowconfigure(r, weight=1)
-                for c in range(5):
-                    self.columnconfigure(c, weight=1)
-                    idx = r * 5 + c
-                    b = tk.Button(self, text="..", width=4, height=2, command=lambda i=idx: self._on_click(i))
-                    b.grid(row=r, column=c, sticky="nsew", padx=1, pady=1)
-                    self._buttons.append(b)
+        def __init__(
+            self,
+            master: Any,
+            *,
+            on_cell_click: Callable[[int], None],
+            on_drag_drop: Callable[[int, int], None],
+        ) -> None:
+            super().__init__(master)
+            self._on_cell_click = on_cell_click
+            self._on_drag_drop = on_drag_drop
+
+            self._canvas = tk.Canvas(self, bg="#102236", highlightthickness=0)
+            self._canvas.pack(fill="both", expand=True)
+
+            self._last_state: JSONValue | None = None
+            self._move_hints: set[int] = set()
+            self._build_hints: set[int] = set()
+            self._selected: set[int] = set()
+            self._piece_at: dict[int, tuple[int, int]] = {}
+            self._cell_boxes: dict[int, tuple[float, float, float, float]] = {}
+
+            self._drag_start_cell: int | None = None
+            self._drag_start_xy: tuple[float, float] | None = None
+            self._dragging: bool = False
+            self._drag_cursor_xy: tuple[float, float] | None = None
+
+            self._canvas.bind("<Configure>", lambda _e: self._redraw())
+            self._canvas.bind("<ButtonPress-1>", self._on_press)
+            self._canvas.bind("<B1-Motion>", self._on_motion)
+            self._canvas.bind("<ButtonRelease-1>", self._on_release)
 
         def update_view(
             self,
             state: JSONValue,
             *,
-            highlights: set[int] | None = None,
+            move_hints: set[int] | None = None,
+            build_hints: set[int] | None = None,
             selected: set[int] | None = None,
         ) -> None:
-            s = state if isinstance(state, dict) else {}
-            board = list(s.get("board", []))
+            self._last_state = state
+            self._move_hints = set(move_hints or set())
+            self._build_hints = set(build_hints or set())
+            self._selected = set(selected or set())
+            self._redraw()
+
+        def _point_to_cell(self, x: float, y: float) -> int | None:
+            for idx, (x1, y1, x2, y2) in self._cell_boxes.items():
+                if x1 <= x <= x2 and y1 <= y <= y2:
+                    return idx
+            return None
+
+        def _on_press(self, e: Any) -> None:
+            cell = self._point_to_cell(float(e.x), float(e.y))
+            if cell is None:
+                return
+            self._drag_start_cell = cell
+            self._drag_start_xy = (float(e.x), float(e.y))
+            self._dragging = False
+            self._drag_cursor_xy = (float(e.x), float(e.y))
+
+        def _on_motion(self, e: Any) -> None:
+            if self._drag_start_cell is None or self._drag_start_xy is None:
+                return
+            sx, sy = self._drag_start_xy
+            dx = float(e.x) - sx
+            dy = float(e.y) - sy
+            if (dx * dx + dy * dy) >= 100.0:
+                self._dragging = True
+            self._drag_cursor_xy = (float(e.x), float(e.y))
+            if self._dragging:
+                self._redraw()
+
+        def _on_release(self, e: Any) -> None:
+            start = self._drag_start_cell
+            if start is None:
+                return
+
+            end = self._point_to_cell(float(e.x), float(e.y))
+            if end is None:
+                end = start
+
+            is_piece_drag = self._dragging and start in self._piece_at and end != start
+
+            self._drag_start_cell = None
+            self._drag_start_xy = None
+            self._dragging = False
+            self._drag_cursor_xy = None
+
+            if is_piece_drag:
+                self._on_drag_drop(start, end)
+            else:
+                self._on_cell_click(end)
+            self._redraw()
+
+        def _redraw(self) -> None:
+            self._canvas.delete("all")
+
+            s = self._last_state if isinstance(self._last_state, dict) else {}
+            board = list(s.get("board", [0] * 25))
             workers = s.get("workers", [[None, None], [None, None]])
 
-            occ: dict[int, str] = {}
-            try:
-                w0 = workers[0]
-                w1 = workers[1]
-                if isinstance(w0[0], int):
-                    occ[int(w0[0])] = "A"
-                if isinstance(w0[1], int):
-                    occ[int(w0[1])] = "B"
-                if isinstance(w1[0], int):
-                    occ[int(w1[0])] = "a"
-                if isinstance(w1[1], int):
-                    occ[int(w1[1])] = "b"
-            except Exception:
-                pass
+            w = max(100, int(self._canvas.winfo_width()))
+            h = max(100, int(self._canvas.winfo_height()))
+            size = min(w, h) - 40
+            cell = size / 5.0
+            ox = (w - size) / 2.0
+            oy = (h - size) / 2.0
 
-            def base_color(h: int) -> tuple[str, str]:
-                if h >= 4:
-                    return ("#555555", "white")
-                if h == 3:
-                    return ("#f7e28b", "black")
-                if h == 2:
-                    return ("#b7e4c7", "black")
-                if h == 1:
-                    return ("#a9d6e5", "black")
-                return ("#e9ecef", "black")
+            self._cell_boxes = {}
+            self._piece_at = {}
 
-            hi = highlights or set()
-            sel = selected or set()
+            def cell_box(idx: int) -> tuple[float, float, float, float]:
+                r, c = divmod(idx, 5)
+                x1 = ox + c * cell
+                y1 = oy + r * cell
+                x2 = x1 + cell
+                y2 = y1 + cell
+                return (x1, y1, x2, y2)
 
-            for i, btn in enumerate(self._buttons):
-                h = int(board[i]) if i < len(board) and isinstance(board[i], int) else 0
-                hch = "D" if h >= 4 else str(h)
-                mark = occ.get(i, ".")
-                bg, fg = base_color(h)
-                if i in hi:
-                    bg = "#ffd6a5"
-                if i in sel:
-                    bg = "#ffadad"
-                btn.configure(text=f"{hch}{mark}", bg=bg, fg=fg, activebackground=bg)
+            def cell_color(height: int) -> str:
+                palette = {
+                    0: "#dbe7f3",
+                    1: "#a8c6e6",
+                    2: "#79a6d2",
+                    3: "#f5d97b",
+                }
+                if height >= 4:
+                    return "#3b4757"
+                return palette.get(height, "#dbe7f3")
+
+            for i in range(25):
+                x1, y1, x2, y2 = cell_box(i)
+                self._cell_boxes[i] = (x1, y1, x2, y2)
+                hval = int(board[i]) if i < len(board) and isinstance(board[i], int) else 0
+                fill = cell_color(hval)
+
+                outline = "#22384d"
+                width = 2
+                if i in self._move_hints:
+                    outline = "#ff9f1c"
+                    width = 4
+                if i in self._build_hints:
+                    outline = "#2ec4b6"
+                    width = 4
+                if i in self._selected:
+                    outline = "#e71d36"
+                    width = 5
+
+                self._canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline=outline, width=width)
+                self._canvas.create_text(
+                    x1 + 8,
+                    y1 + 8,
+                    text=str(hval if hval < 4 else "D"),
+                    fill="#12263a" if hval < 4 else "#f1f5f9",
+                    anchor="nw",
+                    font=("Menlo", 9, "bold"),
+                )
+
+                if hval >= 4:
+                    self._canvas.create_line(x1 + 8, y1 + 8, x2 - 8, y2 - 8, fill="#cbd5e1", width=2)
+                    self._canvas.create_line(x2 - 8, y1 + 8, x1 + 8, y2 - 8, fill="#cbd5e1", width=2)
+
+            piece_def = [
+                (0, 0, "A", "#e63946"),
+                (0, 1, "B", "#f77f00"),
+                (1, 0, "a", "#4361ee"),
+                (1, 1, "b", "#4cc9f0"),
+            ]
+            for pid, wid, label, color in piece_def:
+                try:
+                    pos = workers[pid][wid]
+                except Exception:
+                    pos = None
+                if not isinstance(pos, int) or pos not in self._cell_boxes:
+                    continue
+                self._piece_at[int(pos)] = (pid, wid)
+                x1, y1, x2, y2 = self._cell_boxes[int(pos)]
+                mx = (x1 + x2) / 2.0
+                my = (y1 + y2) / 2.0
+                r = cell * 0.30
+                self._canvas.create_oval(mx - r, my - r, mx + r, my + r, fill=color, outline="#0b132b", width=3)
+                self._canvas.create_text(mx, my, text=label, fill="white", font=("Menlo", 14, "bold"))
+
+            # Drag preview: show a ghost piece under the cursor.
+            if self._dragging and self._drag_start_cell in self._piece_at and self._drag_cursor_xy is not None:
+                pid, wid = self._piece_at[self._drag_start_cell]
+                ghost_color = "#e63946" if (pid == 0 and wid == 0) else "#f77f00" if pid == 0 else "#4361ee" if wid == 0 else "#4cc9f0"
+                gx, gy = self._drag_cursor_xy
+                r = cell * 0.26
+                self._canvas.create_oval(
+                    gx - r,
+                    gy - r,
+                    gx + r,
+                    gy + r,
+                    fill=ghost_color,
+                    outline="#0b132b",
+                    width=2,
+                    stipple="gray50",
+                )
 
     class TicTacToeBoard(ttk.Frame):
         def __init__(self, master: Any, *, on_click: Callable[[int], None]) -> None:
@@ -224,6 +365,15 @@ def launch_gui(args: argparse.Namespace) -> int:
 
             self.title("AI Arena GUI")
             self.geometry("1100x720")
+            self.configure(bg="#0f172a")
+
+            style = ttk.Style(self)
+            if "clam" in style.theme_names():
+                style.theme_use("clam")
+            style.configure("TFrame", background="#0f172a")
+            style.configure("TLabelframe", background="#0f172a", foreground="#e2e8f0")
+            style.configure("TLabelframe.Label", background="#0f172a", foreground="#e2e8f0")
+            style.configure("TLabel", background="#0f172a", foreground="#e2e8f0")
 
             self._explicit_game_spec = args.game
             self._live_game_spec = args.game or "tictactoe"
@@ -252,18 +402,20 @@ def launch_gui(args: argparse.Namespace) -> int:
             self._ss_place_sel: list[int] = []
             self._ss_worker_sel: int | None = None
             self._ss_dest_sel: int | None = None
+            self._ss_build_sel: int | None = None
             self._ss_move_map: dict[tuple[int, int, int | None], JSONValue] = {}
             self._ss_dests_by_worker: dict[int, set[int]] = {}
             self._ss_builds_by_worker_dest: dict[tuple[int, int], set[int | None]] = {}
 
             # UI
             self._status_var = tk.StringVar(value="")
+            self._action_var = tk.StringVar(value="")
 
-            root = ttk.Frame(self)
+            root = ttk.Frame(self, padding=12)
             root.pack(fill="both", expand=True)
 
             paned = ttk.Panedwindow(root, orient="horizontal")
-            paned.pack(fill="both", expand=True, padx=10, pady=10)
+            paned.pack(fill="both", expand=True)
 
             self._left = ttk.Frame(paned)
             self._right = ttk.Frame(paned)
@@ -273,11 +425,29 @@ def launch_gui(args: argparse.Namespace) -> int:
             self._board_container = ttk.Frame(self._left)
             self._board_container.pack(fill="both", expand=True)
 
+            legend = ttk.Frame(self._left, padding=(0, 8, 0, 0))
+            legend.pack(fill="x")
+            ttk.Label(legend, text="Move Target", foreground="#ff9f1c").pack(side="left")
+            ttk.Label(legend, text="   Build Target", foreground="#2ec4b6").pack(side="left")
+            ttk.Label(legend, text="   Selected", foreground="#e71d36").pack(side="left")
+
             self._board_kind: str = "text"
             self._board_widget: Any = None
 
             status = ttk.Label(self._right, textvariable=self._status_var, wraplength=360, justify="left")
-            status.pack(fill="x", pady=(0, 10))
+            status.pack(fill="x", pady=(0, 8))
+
+            action_card = ttk.LabelFrame(self._right, text="Action", padding=10)
+            action_card.pack(fill="x", pady=(0, 10))
+            ttk.Label(action_card, textvariable=self._action_var, wraplength=330, justify="left").pack(fill="x", pady=(0, 8))
+            action_buttons = ttk.Frame(action_card)
+            action_buttons.pack(fill="x")
+            self._btn_build = ttk.Button(action_buttons, text="Build", command=self._confirm_skysummit_build)
+            self._btn_cancel_action = ttk.Button(action_buttons, text="Cancel", command=self._cancel_skysummit_action)
+            self._btn_build.grid(row=0, column=0, sticky="ew")
+            self._btn_cancel_action.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+            action_buttons.columnconfigure(0, weight=1)
+            action_buttons.columnconfigure(1, weight=1)
 
             controls = ttk.Frame(self._right)
             controls.pack(fill="x", pady=(0, 10))
@@ -309,17 +479,17 @@ def launch_gui(args: argparse.Namespace) -> int:
             ttk.Button(file_row, text="Restart Match", command=self._restart_match).pack(side="left", padx=(8, 0))
 
             ttk.Label(self._right, text="Move History:").pack(anchor="w")
-            self._hist = tk.Listbox(self._right, height=12)
+            self._hist = tk.Listbox(self._right, height=14)
+            self._hist.configure(
+                bg="#111827",
+                fg="#e5e7eb",
+                selectbackground="#334155",
+                highlightthickness=1,
+                highlightbackground="#334155",
+                relief="flat",
+            )
             self._hist.pack(fill="both", expand=False, pady=(4, 10))
             self._hist.bind("<<ListboxSelect>>", self._on_hist_select)
-
-            ttk.Label(self._right, text="Legal Moves (for current player):").pack(anchor="w")
-            self._legal = tk.Listbox(self._right, height=10)
-            self._legal.pack(fill="both", expand=True, pady=(4, 6))
-            self._legal.bind("<Double-Button-1>", lambda _e: self._submit_selected_legal_move())
-
-            self._btn_submit = ttk.Button(self._right, text="Submit Selected Move", command=self._submit_selected_legal_move)
-            self._btn_submit.pack(fill="x")
 
             self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -423,7 +593,11 @@ def launch_gui(args: argparse.Namespace) -> int:
 
             if game.name == "skysummit":
                 self._board_kind = "skysummit"
-                self._board_widget = SkysummitBoard(self._board_container, on_click=self._on_cell_click)
+                self._board_widget = SkysummitBoard(
+                    self._board_container,
+                    on_cell_click=self._on_cell_click,
+                    on_drag_drop=self._on_piece_drag_drop,
+                )
                 self._board_widget.pack(fill="both", expand=True)
                 return
             if game.name == "tictactoe":
@@ -440,6 +614,7 @@ def launch_gui(args: argparse.Namespace) -> int:
             self._ss_place_sel = []
             self._ss_worker_sel = None
             self._ss_dest_sel = None
+            self._ss_build_sel = None
             self._ss_move_map = {}
             self._ss_dests_by_worker = {}
             self._ss_builds_by_worker_dest = {}
@@ -483,7 +658,7 @@ def launch_gui(args: argparse.Namespace) -> int:
                 if len(self._ss_place_sel) == 2:
                     move = {"t": "place", "to": [self._ss_place_sel[0], self._ss_place_sel[1]]}
                     if move in legal:
-                        self._ss_place_sel = []
+                        self._reset_skysummit_ui_state()
                         self._apply_live_move(move, ms=None, note=None)
                     else:
                         self._ss_place_sel = []
@@ -495,50 +670,50 @@ def launch_gui(args: argparse.Namespace) -> int:
             if phase != "play":
                 return
 
-            workers = s.get("workers")
-            wpos = None
+            self._index_skysummit_moves(legal)
+
+            worker_pos_by_idx: dict[int, int] = {}
             try:
-                wpos = workers[player]  # type: ignore[index]
-            except Exception:
-                wpos = None
-
-            if self._ss_worker_sel is None:
+                wpos = s.get("workers", [[None, None], [None, None]])[player]
                 if isinstance(wpos, list) and len(wpos) == 2:
-                    if wpos[0] == idx:
-                        self._ss_worker_sel = 0
-                    elif wpos[1] == idx:
-                        self._ss_worker_sel = 1
+                    if isinstance(wpos[0], int):
+                        worker_pos_by_idx[int(wpos[0])] = 0
+                    if isinstance(wpos[1], int):
+                        worker_pos_by_idx[int(wpos[1])] = 1
+            except Exception:
+                worker_pos_by_idx = {}
+
+            # Clicking your worker selects it.
+            if idx in worker_pos_by_idx:
+                self._ss_worker_sel = worker_pos_by_idx[idx]
+                self._ss_dest_sel = None
+                self._ss_build_sel = None
                 self._refresh()
                 return
 
-            if self._ss_dest_sel is None:
-                w = self._ss_worker_sel
-                if idx in self._ss_dests_by_worker.get(w, set()):
-                    self._ss_dest_sel = idx
-                    builds = self._ss_builds_by_worker_dest.get((w, idx), set())
-                    if None in builds:
-                        mv = self._ss_move_map.get((w, idx, None))
-                        if mv is not None:
-                            self._reset_skysummit_ui_state()
-                            self._apply_live_move(mv, ms=None, note=None)
-                            return
+            # If a worker is selected but no destination yet, clicking a legal destination picks it.
+            if self._ss_worker_sel is not None and self._ss_dest_sel is None:
+                if self._select_skysummit_destination(self._ss_worker_sel, idx):
+                    return
                 self._refresh()
                 return
 
-            w = self._ss_worker_sel
-            to = self._ss_dest_sel
-            builds = self._ss_builds_by_worker_dest.get((w, to), set())
-            if idx in builds:
-                mv = self._ss_move_map.get((w, to, idx))
-                if mv is not None:
-                    self._reset_skysummit_ui_state()
-                    self._apply_live_move(mv, ms=None, note=None)
+            # Build selection after a destination is chosen.
+            if self._ss_worker_sel is not None and self._ss_dest_sel is not None:
+                builds = self._ss_builds_by_worker_dest.get((self._ss_worker_sel, self._ss_dest_sel), set())
+                if idx in builds:
+                    self._ss_build_sel = None if self._ss_build_sel == idx else idx
+                    self._refresh()
                     return
 
-            self._ss_dest_sel = None
+                # Clicking another legal destination re-targets the move.
+                if idx in self._ss_dests_by_worker.get(self._ss_worker_sel, set()):
+                    if self._select_skysummit_destination(self._ss_worker_sel, idx):
+                        return
+
             self._refresh()
 
-        def _submit_selected_legal_move(self) -> None:
+        def _on_piece_drag_drop(self, src: int, dst: int) -> None:
             if self._busy or self._replay_mode:
                 return
             if not self._is_at_latest():
@@ -546,24 +721,84 @@ def launch_gui(args: argparse.Namespace) -> int:
             if self._game is None:
                 return
 
+            if self._game.name != "skysummit":
+                return
+
             player = self._player_to_act()
             agent = self._agents[player]
             if not _is_human(agent):
                 return
 
+            state = self._states[-1]
             legal = self._current_legal_moves()
             if legal is None:
                 return
 
-            sel = self._legal.curselection()
-            if not sel:
+            s = state if isinstance(state, dict) else {}
+            if s.get("phase") != "play":
                 return
-            idx = int(sel[0])
-            if not (0 <= idx < len(legal)):
+
+            self._index_skysummit_moves(legal)
+
+            w = None
+            try:
+                wpos = s.get("workers", [[None, None], [None, None]])[player]
+                if isinstance(wpos, list) and len(wpos) == 2:
+                    if wpos[0] == src:
+                        w = 0
+                    elif wpos[1] == src:
+                        w = 1
+            except Exception:
+                w = None
+
+            if w is None:
                 return
-            move = legal[idx]
+
+            self._ss_worker_sel = w
+            self._ss_build_sel = None
+            if self._select_skysummit_destination(w, dst):
+                return
+            self._refresh()
+
+        def _select_skysummit_destination(self, worker_idx: int, dst: int) -> bool:
+            if dst not in self._ss_dests_by_worker.get(worker_idx, set()):
+                return False
+
+            self._ss_worker_sel = worker_idx
+            self._ss_dest_sel = dst
+            self._ss_build_sel = None
+
+            builds = self._ss_builds_by_worker_dest.get((worker_idx, dst), set())
+            if None in builds:
+                mv = self._ss_move_map.get((worker_idx, dst, None))
+                if mv is not None:
+                    self._reset_skysummit_ui_state()
+                    self._apply_live_move(mv, ms=None, note=None)
+                    return True
+
+            self._refresh()
+            return True
+
+        def _confirm_skysummit_build(self) -> None:
+            if self._busy or self._replay_mode or not self._is_at_latest():
+                return
+            if self._game is None or self._game.name != "skysummit":
+                return
+            player = self._player_to_act()
+            if not _is_human(self._agents[player]):
+                return
+            if self._ss_worker_sel is None or self._ss_dest_sel is None or self._ss_build_sel is None:
+                return
+
+            mv = self._ss_move_map.get((self._ss_worker_sel, self._ss_dest_sel, self._ss_build_sel))
+            if mv is None:
+                return
             self._reset_skysummit_ui_state()
-            self._apply_live_move(move, ms=None, note=None)
+            self._apply_live_move(mv, ms=None, note=None)
+
+        def _cancel_skysummit_action(self) -> None:
+            self._reset_skysummit_ui_state()
+            self._refresh()
 
         # --- navigation + autoplay ---
 
@@ -843,8 +1078,12 @@ def launch_gui(args: argparse.Namespace) -> int:
 
             cur_state = self._states[self._cursor]
 
-            highlights: set[int] = set()
+            move_hints: set[int] = set()
+            build_hints: set[int] = set()
             selected: set[int] = set()
+            action_text = "Watch mode."
+            can_build = False
+            can_cancel = False
 
             if not self._replay_mode and self._is_at_latest() and not self._is_match_over():
                 player = self._player_to_act()
@@ -852,30 +1091,68 @@ def launch_gui(args: argparse.Namespace) -> int:
                     legal = self._current_legal_moves()
                     if legal is not None:
                         if game.name == "tictactoe":
-                            highlights = set(int(x) for x in legal if isinstance(x, int))
+                            move_hints = set(int(x) for x in legal if isinstance(x, int))
+                            action_text = "Your turn. Click a highlighted square."
                         elif game.name == "skysummit":
                             self._index_skysummit_moves(legal)
                             s = cur_state if isinstance(cur_state, dict) else {}
                             phase = s.get("phase")
                             if phase == "place":
                                 selected = set(self._ss_place_sel)
+                                can_cancel = bool(self._ss_place_sel)
+                                action_text = "Placement: click two empty cells to deploy your two workers."
+                                if len(self._ss_place_sel) == 1:
+                                    action_text = "Placement: pick one more empty cell."
                             elif phase == "play":
+                                can_cancel = (
+                                    self._ss_worker_sel is not None
+                                    or self._ss_dest_sel is not None
+                                    or self._ss_build_sel is not None
+                                )
+                                wpos: list[int] = []
+                                try:
+                                    raw = s.get("workers", [[None, None], [None, None]])[player]
+                                    if isinstance(raw, list):
+                                        wpos = [int(x) for x in raw if isinstance(x, int)]
+                                except Exception:
+                                    wpos = []
+
                                 if self._ss_worker_sel is None:
-                                    try:
-                                        wpos = s.get("workers", [[None, None], [None, None]])[player]
-                                        highlights = {int(x) for x in wpos if isinstance(x, int)}
-                                    except Exception:
-                                        highlights = set()
+                                    move_hints = set(wpos)
+                                    action_text = "Select a worker (or drag it) to start your move."
                                 elif self._ss_dest_sel is None:
-                                    highlights = set(self._ss_dests_by_worker.get(self._ss_worker_sel, set()))
+                                    if 0 <= self._ss_worker_sel < len(wpos):
+                                        selected.add(int(wpos[self._ss_worker_sel]))
+                                    move_hints = set(self._ss_dests_by_worker.get(self._ss_worker_sel, set()))
+                                    action_text = "Choose a destination for the selected worker."
                                 else:
-                                    highlights = set(self._ss_builds_by_worker_dest.get((self._ss_worker_sel, self._ss_dest_sel), set()))  # type: ignore[arg-type]
-                                    selected = {int(self._ss_dest_sel)}
+                                    if 0 <= self._ss_worker_sel < len(wpos):
+                                        selected.add(int(wpos[self._ss_worker_sel]))
+                                    selected.add(int(self._ss_dest_sel))
+                                    if self._ss_build_sel is not None:
+                                        selected.add(int(self._ss_build_sel))
+                                    raw_builds = self._ss_builds_by_worker_dest.get((self._ss_worker_sel, self._ss_dest_sel), set())
+                                    build_hints = {int(x) for x in raw_builds if isinstance(x, int)}
+                                    can_build = self._ss_build_sel is not None
+                                    action_text = "Select a build cell, then press Build."
+                                    if self._ss_build_sel is not None:
+                                        action_text = "Build cell selected. Press Build to confirm."
+                else:
+                    action_text = "AI turn. Press Next or enable Autoplay."
+            elif self._replay_mode:
+                action_text = "Replay mode. Use Prev/Next or Autoplay."
+            elif self._is_match_over():
+                action_text = "Match over. Restart to play again."
 
             if self._board_kind == "skysummit":
-                self._board_widget.update_view(cur_state, highlights=highlights, selected=selected)
+                self._board_widget.update_view(
+                    cur_state,
+                    move_hints=move_hints,
+                    build_hints=build_hints,
+                    selected=selected,
+                )
             elif self._board_kind == "tictactoe":
-                self._board_widget.update_view(cur_state, highlights=highlights, selected=selected)
+                self._board_widget.update_view(cur_state, highlights=move_hints, selected=selected)
             else:
                 self._board_widget.update_view(game.render(cur_state))
 
@@ -894,6 +1171,7 @@ def launch_gui(args: argparse.Namespace) -> int:
             if term.is_terminal:
                 lines.append(f"terminal: winner={term.winner} reason={term.reason}")
             self._status_var.set("\n".join(lines))
+            self._action_var.set(action_text)
 
             self._hist.delete(0, "end")
             for r in self._moves:
@@ -907,16 +1185,12 @@ def launch_gui(args: argparse.Namespace) -> int:
                 except Exception:
                     pass
 
-            self._legal.delete(0, "end")
-            self._btn_submit.configure(state="disabled")
-            if not self._replay_mode and self._is_at_latest() and not self._is_match_over():
-                player = self._player_to_act()
-                if _is_human(self._agents[player]):
-                    legal = self._current_legal_moves()
-                    if legal is not None:
-                        for m in legal:
-                            self._legal.insert("end", str(m))
-                        self._btn_submit.configure(state="normal")
+            if self._board_kind == "skysummit":
+                self._btn_build.configure(state=("normal" if can_build else "disabled"))
+                self._btn_cancel_action.configure(state=("normal" if can_cancel else "disabled"))
+            else:
+                self._btn_build.configure(state="disabled")
+                self._btn_cancel_action.configure(state="disabled")
 
         def _index_skysummit_moves(self, legal: list[JSONValue]) -> None:
             self._ss_move_map = {}
