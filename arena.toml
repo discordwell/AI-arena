@@ -12,7 +12,7 @@ prime_pause = false
 
 [[competitors]]
 id = "codex"
-home_game = "tictactoe"
+home_game = "codex/game/game.py:CodexGame"
 agent = "codex/agent/agent.py:CodexAgent"
 
 [[competitors]]
