@@ -75,6 +75,13 @@ def cmd_play(args: argparse.Namespace) -> int:
                 close()
 
 
+def cmd_gui(args: argparse.Namespace) -> int:
+    # Import lazily so the rest of the CLI works in environments without Tkinter.
+    from .gui import launch_gui
+
+    return launch_gui(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ai-arena")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -89,6 +96,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_play.add_argument("--prime-pause", action="store_true", help="Pause after prime-numbered turns")
     p_play.add_argument("--log", help="Write JSON match log to this path")
     p_play.set_defaults(func=cmd_play)
+
+    p_gui = sub.add_parser("gui", help="Launch a Tkinter GUI to play/watch matches or replay logs")
+    p_gui.add_argument(
+        "--game",
+        default=None,
+        help="Built-in name or '<path>:<symbol>' (for live matches; for --load-log, omit to infer when possible)",
+    )
+    p_gui.add_argument("--p0", default="human", help="Agent0: human|random|subprocess:<cmd>|<path>:<symbol>")
+    p_gui.add_argument("--p1", default="random", help="Agent1: human|random|subprocess:<cmd>|<path>:<symbol>")
+    p_gui.add_argument("--load-log", help="Open a JSON match log for replay")
+    p_gui.add_argument("--save-log", help="Write a JSON match log here when the live match ends")
+    p_gui.add_argument("--max-turns", type=int, default=10_000, help="Hard cap on turns for live play")
+    p_gui.add_argument("--auto-delay-ms", type=int, default=250, help="Autoplay delay in milliseconds")
+    p_gui.set_defaults(func=cmd_gui)
 
     load_tournament_parser(sub)
 

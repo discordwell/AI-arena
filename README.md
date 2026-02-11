@@ -34,6 +34,10 @@ python -m pip install -e ".[dev]"
 ai-arena list-games
 ai-arena play tictactoe --p0 human --p1 random
 ai-arena tournament --config arena.toml
+
+# GUI (optional)
+ai-arena gui --game codex/game/game.py:CodexGame --p0 human --p1 random
+ai-arena gui --load-log /abs/path/to/match_log.json
 ```
 
 ## Add Your Game / Agent
