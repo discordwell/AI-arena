@@ -201,6 +201,8 @@ class CalderaApp:
         self._legal_moves: list[dict] = []
         self._human_waiting = False
         self._game_over = False
+        self._forge_mode = False       # True when Smith selected and F pressed
+        self._selected_is_smith = False
         self._generation = 0          # bumped on new game; guards stale AI callbacks
         self._closing = False
         self._autoplay_id: str | None = None
@@ -284,7 +286,7 @@ class CalderaApp:
         legend_text = (
             "C=Crown  L=Lancer  S=Smith  |  "
             "Green=Move  Orange=Forge  Red=Capture  |  "
-            "Esc=Deselect"
+            "F=Toggle Forge  Esc=Deselect"
         )
         tk.Label(
             legend, text=legend_text, bg="#0f172a", fg="#64748b",
@@ -293,6 +295,8 @@ class CalderaApp:
 
         # Key bindings
         self.root.bind("<Escape>", lambda e: self._deselect())
+        self.root.bind("f", lambda e: self._toggle_forge())
+        self.root.bind("F", lambda e: self._toggle_forge())
 
     def _build_play_controls(self) -> None:
         btn_cfg = dict(
@@ -461,16 +465,22 @@ class CalderaApp:
 
         if self._selected is not None:
             sr, sc = self._selected
-            # Check for move/forge/capture at (r, c)
-            for m in self._legal_moves:
-                if m["action"] == "move" and m["from"] == [sr, sc] and m["to"] == [r, c]:
-                    self._human_waiting = False
-                    self._execute_move(m)
-                    return
-                if m["action"] == "forge" and m["smith"] == [sr, sc] and m["target"] == [r, c]:
-                    self._human_waiting = False
-                    self._execute_move(m)
-                    return
+
+            if self._forge_mode:
+                # In forge mode, only accept forge actions
+                for m in self._legal_moves:
+                    if m["action"] == "forge" and m["smith"] == [sr, sc] and m["target"] == [r, c]:
+                        self._human_waiting = False
+                        self._forge_mode = False
+                        self._execute_move(m)
+                        return
+            else:
+                # In move mode, only accept move actions
+                for m in self._legal_moves:
+                    if m["action"] == "move" and m["from"] == [sr, sc] and m["to"] == [r, c]:
+                        self._human_waiting = False
+                        self._execute_move(m)
+                        return
 
             # Clicked another friendly piece → switch selection
             for p in self._state[f"p{self._current_player}"]:
@@ -488,8 +498,35 @@ class CalderaApp:
                 self._select_piece(r, c)
                 return
 
+    def _toggle_forge(self) -> None:
+        if not self._human_waiting or self._selected is None:
+            return
+        if not self._selected_is_smith:
+            return
+        self._forge_mode = not self._forge_mode
+        self._refresh_overlays()
+
     def _select_piece(self, r: int, c: int) -> None:
         self._selected = (r, c)
+        self._forge_mode = False
+
+        # Determine if selected piece is a Smith
+        self._selected_is_smith = False
+        ptype = "?"
+        for p in self._state[f"p{self._current_player}"]:
+            if p["r"] == r and p["c"] == c:
+                ptype = p["type"]
+                if ptype == SMITH:
+                    self._selected_is_smith = True
+                break
+
+        self._refresh_overlays()
+
+    def _refresh_overlays(self) -> None:
+        """Recompute and display overlays for the currently selected piece."""
+        if self._selected is None:
+            return
+        r, c = self._selected
 
         move_targets: set[tuple[int, int]] = set()
         forge_targets: set[tuple[int, int]] = set()
@@ -508,23 +545,43 @@ class CalderaApp:
             elif m["action"] == "forge" and m["smith"] == [r, c]:
                 forge_targets.add((m["target"][0], m["target"][1]))
 
+        # In forge mode show only forge targets; in move mode show moves + captures
+        if self._forge_mode:
+            shown_moves = set()
+            shown_captures = set()
+            shown_forges = forge_targets
+        else:
+            shown_moves = move_targets
+            shown_captures = capture_targets
+            shown_forges = set()
+
         self.board.set_overlays(
             selected=(r, c),
-            move_targets=move_targets,
-            forge_targets=forge_targets,
-            capture_targets=capture_targets,
+            move_targets=shown_moves,
+            forge_targets=shown_forges,
+            capture_targets=shown_captures,
         )
 
-        ptype = "?"
+        ptype_name = "?"
         for p in self._state[f"p{self._current_player}"]:
             if p["r"] == r and p["c"] == c:
-                ptype = p["type"].capitalize()
+                ptype_name = p["type"].capitalize()
                 break
-        n = len(move_targets) + len(forge_targets) + len(capture_targets)
-        self.action_var.set(f"{ptype} selected \u2014 {n} actions available")
+
+        if self._forge_mode:
+            n = len(forge_targets)
+            self.action_var.set(f"{ptype_name} FORGE mode \u2014 {n} targets (F=switch to Move)")
+        elif self._selected_is_smith and forge_targets:
+            n = len(shown_moves) + len(shown_captures)
+            self.action_var.set(f"{ptype_name} MOVE mode \u2014 {n} moves (F=switch to Forge)")
+        else:
+            n = len(shown_moves) + len(shown_captures)
+            self.action_var.set(f"{ptype_name} selected \u2014 {n} actions available")
 
     def _deselect(self) -> None:
         self._selected = None
+        self._forge_mode = False
+        self._selected_is_smith = False
         self.board.clear_overlays()
         if self._human_waiting:
             self.action_var.set("Click a piece to select it")
@@ -653,6 +710,8 @@ class CalderaApp:
         self._legal_moves = []
         self._human_waiting = False
         self._game_over = False
+        self._forge_mode = False
+        self._selected_is_smith = False
         self._move_history = []
         self.history_list.delete(0, tk.END)
         self.board.clear_overlays()

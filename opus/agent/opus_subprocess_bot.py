@@ -20,22 +20,78 @@ def _minijson(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
+def _render_board(state: dict[str, Any]) -> str:
+    """Produce a human-readable board string for the prompt."""
+    board = state["board"]
+    size = len(board)
+    syms = {"crown": "c", "lancer": "l", "smith": "s"}
+    pmap: dict[tuple[int, int], str] = {}
+    for p in state.get("p0", []):
+        pmap[(p["r"], p["c"])] = syms[p["type"]]
+    for p in state.get("p1", []):
+        pmap[(p["r"], p["c"])] = syms[p["type"]].upper()
+
+    lines = ["  " + " ".join(str(c) for c in range(size))]
+    for r in range(size):
+        parts = [f"{r}"]
+        for c in range(size):
+            if (r, c) in pmap:
+                parts.append(pmap[(r, c)])
+            elif board[r][c] == -1:
+                parts.append("X")
+            else:
+                parts.append(str(board[r][c]))
+        lines.append(" ".join(parts))
+    return "\n".join(lines)
+
+
 def _build_prompt(turn_msg: dict[str, Any]) -> str:
-    game = turn_msg.get("game")
     player = turn_msg.get("player")
     state = turn_msg.get("state")
     legal_moves = turn_msg.get("legal_moves")
 
+    board_str = _render_board(state)
+    n0 = len(state.get("p0", []))
+    n1 = len(state.get("p1", []))
+    ply = state.get("ply", 0)
+
+    # Group legal moves by piece for readability
+    move_lines = []
+    for m in legal_moves:
+        if m["action"] == "move":
+            move_lines.append(f'  {{"action":"move","from":{m["from"]},"to":{m["to"]}}}')
+        else:
+            move_lines.append(f'  {{"action":"forge","smith":{m["smith"]},"target":{m["target"]}}}')
+    moves_str = "\n".join(move_lines)
+
     return (
-        "You are playing a deterministic 2-player turn-based game.\n"
-        "Choose exactly one legal move. Think carefully about strategy.\n"
-        "Output ONLY a JSON object with key \"move\" whose value is one "
-        "element from legal_moves, copied exactly.\n"
-        "Do not output any other text, explanation, or markdown formatting.\n\n"
-        f"game={game}\n"
-        f"player={player}\n"
-        f"state_json={_minijson(state)}\n"
-        f"legal_moves_json={_minijson(legal_moves)}\n"
+        "You are playing CALDERA, a volcanic tactics game on a 7x7 grid.\n\n"
+        "RULES SUMMARY:\n"
+        "- Win by capturing/destroying the enemy Crown. Failing that, most pieces at ply 200.\n"
+        "- Pieces: Crown (C, 1 step 8-dir), Lancer (L, 1-2 steps straight line, leaps), "
+        "Smith (S, 1 step 8-dir, can Forge).\n"
+        "- Movement: destination not Vent(-1), not friendly. Climb max +1 height/step, descend any.\n"
+        "- Lancer 2-step: straight line, intermediate in-bounds & not Vent, height checked per step.\n"
+        "- Forge (Smith only): raise orthogonally adjacent empty non-Vent cell by +1 height.\n"
+        "- Height 4+ erupts: cell becomes Vent, destroys piece on it, raises orthogonal neighbors +1, chain.\n"
+        "- Both Crowns destroyed in same eruption: active player LOSES.\n"
+        "- Landing on enemy piece captures it.\n\n"
+        "STRATEGY:\n"
+        "- Protect your Crown at all costs. Lancers threaten from 2 cells away.\n"
+        "- Use Smiths to forge terrain walls (height blocks climbing). Height 3 cells near enemies are eruption threats.\n"
+        "- Control the center. High ground is defensively strong.\n"
+        "- Look for Lancer leaps to capture undefended pieces, especially the enemy Crown.\n"
+        "- Set up dual threats: Lancer attack + eruption risk forces the opponent into losing trades.\n\n"
+        f"You are Player {player} ({'lowercase' if player == 0 else 'UPPERCASE'} pieces). "
+        f"Ply {ply}. P0 has {n0} pieces, P1 has {n1} pieces.\n\n"
+        f"BOARD (row col, 0=top-left, X=Vent, digits=height, letters=pieces):\n{board_str}\n\n"
+        f"YOUR PIECES:\n{_minijson(state.get(f'p{player}', []))}\n\n"
+        f"ENEMY PIECES:\n{_minijson(state.get(f'p{1 - player}', []))}\n\n"
+        f"LEGAL MOVES ({len(legal_moves)} options):\n{moves_str}\n\n"
+        "Think step by step about the position. Consider threats to your Crown, "
+        "capture opportunities, terrain control, and Lancer leap attacks.\n"
+        "Then output ONLY a JSON object: {\"move\": <chosen_move>}\n"
+        "The move value must be copied exactly from the legal moves list above.\n"
     )
 
 
