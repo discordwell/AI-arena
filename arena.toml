@@ -17,7 +17,7 @@ agent = "codex/agent/agent.py:CodexAgent"
 
 [[competitors]]
 id = "opus"
-home_game = "tictactoe"
+home_game = "opus/game/game.py:OpusGame"
 agent = "opus/agent/agent.py:OpusAgent"
 
 [[competitors]]
