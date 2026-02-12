@@ -121,6 +121,7 @@ def _query_claude(
 
     cp = subprocess.run(
         cmd,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=timeout_s,
@@ -187,7 +188,10 @@ def _main() -> int:
     parser.add_argument("--claude-timeout-s", type=float, default=float(os.environ.get("OPUS_ARENA_TIMEOUT_S", "3500")))
     args = parser.parse_args()
 
-    for line in sys.stdin:
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break  # EOF
         line = line.strip()
         if not line:
             continue
