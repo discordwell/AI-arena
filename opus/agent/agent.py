@@ -21,7 +21,7 @@ class OpusAgent:
     """
 
     name: str = "opus_subprocess_agent"
-    model: str = "claude-opus-4-6"
+    model: str = "sonnet"
     turn_timeout_s: float = 3600.0
     _delegate: SubprocessAgent = field(init=False, repr=False)
 
