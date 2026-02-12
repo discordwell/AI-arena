@@ -115,7 +115,6 @@ def _query_claude(
         claude_bin,
         "--print",
         "--model", model,
-        "--max-tokens", "1024",
         prompt,
     ]
 
