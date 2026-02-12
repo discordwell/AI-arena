@@ -26,6 +26,8 @@ class OpusAgent:
     _delegate: SubprocessAgent = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # OPUS_ARENA_MODEL overrides the default model
+        self.model = os.environ.get("OPUS_ARENA_MODEL", self.model)
         override = os.environ.get("OPUS_ARENA_COMMAND")
         if override:
             cmd = shlex.split(override)
