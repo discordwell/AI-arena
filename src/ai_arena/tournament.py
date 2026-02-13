@@ -126,14 +126,27 @@ def run_tournament(
     sb = _scoreboard_init(competitors)
     matches: list[MatchSummary] = []
 
+    # Build a map of competitor home games for "away" matches
+    home_games = {c.id: c.home_game for c in competitors}
     neutral_game_factory = _game_factory(neutral_game)
 
     for a, b in _pairings(competitors):
-        # Matches per pairing: a-home, b-home, neutral.
+        # Matches per pairing: a-home, b-home, + third competitor's home (or neutral fallback).
+        others = [c for c in competitors if c.id not in (a.id, b.id)]
+        if others:
+            third = others[0]
+            third_ctx = "away:" + third.id
+            third_factory = _game_factory(third.home_game)
+            third_p0 = min(a.id, b.id)
+        else:
+            third_ctx = "neutral"
+            third_factory = neutral_game_factory
+            third_p0 = min(a.id, b.id)
+
         scenarios = [
             ("home:" + a.id, _game_factory(a.home_game), a.id),
             ("home:" + b.id, _game_factory(b.home_game), b.id),
-            ("neutral", neutral_game_factory, min(a.id, b.id)),
+            (third_ctx, third_factory, third_p0),
         ]
 
         for context, game_factory, p0_default in scenarios:
