@@ -181,18 +181,25 @@ def run_tournament(
                         _maybe_close(agent1)
 
                     winner_id = None if res.winner is None else (p0_id if res.winner == 0 else p1_id)
-                    matches.append(
-                        MatchSummary(
-                            context=context,
-                            game=res.game,
-                            p0=p0_id,
-                            p1=p1_id,
-                            winner=winner_id,
-                            reason=res.reason,
-                            turns=res.turns,
-                        )
+                    summary = MatchSummary(
+                        context=context,
+                        game=res.game,
+                        p0=p0_id,
+                        p1=p1_id,
+                        winner=winner_id,
+                        reason=res.reason,
+                        turns=res.turns,
                     )
+                    matches.append(summary)
                     _apply_result(sb, p0_id, p1_id, winner_id)
+
+                    # Live match result output
+                    w = winner_id or "DRAW"
+                    print(
+                        f"  match {len(matches):>2}: [{context}] {p0_id} vs {p1_id}"
+                        f"  ->  {w} ({res.reason}, {res.turns}t)",
+                        flush=True,
+                    )
 
     duration_ms = int((time.time() - started) * 1000)
     return TournamentResult(

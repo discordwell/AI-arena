@@ -110,10 +110,9 @@ def _query_codex(
             pass
 
 
-def _fallback_legal_move(legal_moves: list[Any]) -> Any:
-    if not legal_moves:
-        return None
-    return legal_moves[0]
+def _emit(resp: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(resp) + "\n")
+    sys.stdout.flush()
 
 
 def _main() -> int:
@@ -157,14 +156,19 @@ def _main() -> int:
                 workdir=workdir,
                 timeout_s=args.codex_timeout_s,
             )
-            if move not in legal_moves:
-                move = _fallback_legal_move(legal_moves)
         except Exception as e:
-            print(f"codex_subprocess_bot_error: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-            move = _fallback_legal_move(legal_moves)
+            err = f"{type(e).__name__}: {e}"
+            print(f"codex_subprocess_bot_error: {err}", file=sys.stderr, flush=True)
+            _emit({"type": "error", "error": f"api_call_failed: {err}"})
+            continue
 
-        sys.stdout.write(json.dumps({"type": "move", "move": move}) + "\n")
-        sys.stdout.flush()
+        if move not in legal_moves:
+            err = f"illegal move returned: {move!r}"
+            print(f"codex_subprocess_bot_error: {err}", file=sys.stderr, flush=True)
+            _emit({"type": "error", "error": err})
+            continue
+
+        _emit({"type": "move", "move": move})
 
     return 0
 

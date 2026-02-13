@@ -104,7 +104,14 @@ class SubprocessAgent:
                 # Allow debug logging on stdout; only JSON objects with {"type":"move"} matter.
                 continue
 
-            if not isinstance(resp, dict) or resp.get("type") != "move":
+            if not isinstance(resp, dict):
+                continue
+
+            if resp.get("type") == "error":
+                detail = resp.get("error", "unknown error")
+                raise RuntimeError(f"bot reported error: {detail}")
+
+            if resp.get("type") != "move":
                 # Ignore unknown message types to keep protocol extensible.
                 continue
 

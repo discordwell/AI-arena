@@ -155,10 +155,9 @@ def _query_gemini(
     raise ValueError(f"could not parse gemini output: {raw[:500]}")
 
 
-def _fallback_legal_move(legal_moves: list[Any]) -> Any:
-    if not legal_moves:
-        return None
-    return legal_moves[0]
+def _emit(resp: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(resp) + "\n")
+    sys.stdout.flush()
 
 
 def _main() -> int:
@@ -169,7 +168,6 @@ def _main() -> int:
 
     if not args.api_key:
         print("gemini_subprocess_bot: GOOGLE_API_KEY not set", file=sys.stderr, flush=True)
-        # Fall back to first legal move if no key
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -180,10 +178,7 @@ def _main() -> int:
                 continue
             if not isinstance(msg, dict) or msg.get("type") != "turn":
                 continue
-            legal_moves = msg.get("legal_moves", [])
-            move = _fallback_legal_move(legal_moves)
-            sys.stdout.write(json.dumps({"type": "move", "move": move}) + "\n")
-            sys.stdout.flush()
+            _emit({"type": "error", "error": "GOOGLE_API_KEY not set"})
         return 0
 
     client = genai.Client(api_key=args.api_key)
@@ -211,15 +206,19 @@ def _main() -> int:
                 model=args.model,
                 prompt=_build_prompt(msg),
             )
-            if move not in legal_moves:
-                print(f"gemini_subprocess_bot: illegal move {move!r}, falling back", file=sys.stderr, flush=True)
-                move = _fallback_legal_move(legal_moves)
         except Exception as e:
-            print(f"gemini_subprocess_bot_error: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-            move = _fallback_legal_move(legal_moves)
+            err = f"{type(e).__name__}: {e}"
+            print(f"gemini_subprocess_bot_error: {err}", file=sys.stderr, flush=True)
+            _emit({"type": "error", "error": f"api_call_failed: {err}"})
+            continue
 
-        sys.stdout.write(json.dumps({"type": "move", "move": move}) + "\n")
-        sys.stdout.flush()
+        if move not in legal_moves:
+            err = f"illegal move returned: {move!r}"
+            print(f"gemini_subprocess_bot: {err}", file=sys.stderr, flush=True)
+            _emit({"type": "error", "error": err})
+            continue
+
+        _emit({"type": "move", "move": move})
 
     return 0
 

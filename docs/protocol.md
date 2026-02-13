@@ -45,14 +45,22 @@ Engine -> bot:
 }
 ```
 
-Bot -> engine:
+Bot -> engine (success):
 
 ```json
 {"type": "move", "move": 4}
 ```
 
+Bot -> engine (failure):
+
+```json
+{"type": "error", "error": "api_call_failed: TimeoutError: ..."}
+```
+
 Notes:
 
 - Bots may print other JSON message types; the engine ignores unknown `type`s.
-- If the bot times out, crashes, or returns an illegal move, it forfeits the game.
+- If the bot sends `{"type": "error"}`, the engine treats it as an agent error and the bot forfeits.
+- If the bot times out, crashes, or returns an illegal move, it also forfeits.
+- Bots should **not** silently fall back to a default move on failure — emit an error instead.
 
