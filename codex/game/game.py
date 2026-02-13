@@ -20,7 +20,7 @@ class CodexGame:
     name: str = "skysummit"
 
     board_size: int = 5
-    max_ply: int = 200  # hard stop; tie-break by altitude score
+    max_ply: int = 50  # hard stop; tie-break by altitude score
 
     def initial_state(self) -> JSONValue:
         n = self.board_size * self.board_size

@@ -3,9 +3,13 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 from ai_arena.game import Game, PlayerId, Terminal
 from ai_arena.json_types import JSONValue
-from .board import Board, Piece, PieceType, DIRS
+from board import Board, Piece, PieceType, DIRS
 
 # ANSI Colors
 RED = "\033[91m"
@@ -132,7 +136,7 @@ class GeminiGame:
         # Fix logic: "kings" stores ALIVE status. 
         # If kings[0] is True, Player 0 is ALIVE.
         
-        if state["turn_count"] > 100: # Max turns
+        if state["turn_count"] > 30: # Max turns (capped for tournament speed)
              return Terminal(is_terminal=True, winner=None, reason="Max turns reached")
 
         return Terminal(is_terminal=False, winner=None, reason="")

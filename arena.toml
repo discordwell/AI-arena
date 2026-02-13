@@ -22,5 +22,5 @@ agent = "opus/agent/agent.py:OpusAgent"
 
 [[competitors]]
 id = "gemini"
-home_game = "tictactoe"
+home_game = "gemini/game/game.py:GeminiGame"
 agent = "gemini/agent/agent.py:GeminiAgent"

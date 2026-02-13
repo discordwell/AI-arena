@@ -11,7 +11,7 @@ from ai_arena.json_types import JSONValue
 # ---------------------------------------------------------------------------
 
 SIZE = 7
-MAX_PLY = 200
+MAX_PLY = 50
 VENT = -1  # Height sentinel for erupted / impassable cells
 
 # Piece type tags

@@ -1,0 +1,107 @@
+{
+  "duration_ms": 7541541,
+  "matches": [
+    {
+      "context": "home:codex",
+      "game": "skysummit",
+      "p0": "codex",
+      "p1": "opus",
+      "reason": "reach_level3",
+      "turns": 19,
+      "winner": "codex"
+    },
+    {
+      "context": "home:opus",
+      "game": "caldera",
+      "p0": "opus",
+      "p1": "codex",
+      "reason": "crown_captured",
+      "turns": 18,
+      "winner": "codex"
+    },
+    {
+      "context": "neutral",
+      "game": "tictactoe",
+      "p0": "codex",
+      "p1": "opus",
+      "reason": "win",
+      "turns": 7,
+      "winner": "codex"
+    },
+    {
+      "context": "home:codex",
+      "game": "skysummit",
+      "p0": "codex",
+      "p1": "gemini",
+      "reason": "reach_level3",
+      "turns": 45,
+      "winner": "codex"
+    },
+    {
+      "context": "home:gemini",
+      "game": "photon_laser_tactics",
+      "p0": "gemini",
+      "p1": "codex",
+      "reason": "Player 0 King eliminated",
+      "turns": 5,
+      "winner": "codex"
+    },
+    {
+      "context": "neutral",
+      "game": "tictactoe",
+      "p0": "codex",
+      "p1": "gemini",
+      "reason": "draw",
+      "turns": 9,
+      "winner": null
+    },
+    {
+      "context": "home:opus",
+      "game": "caldera",
+      "p0": "opus",
+      "p1": "gemini",
+      "reason": "crown_captured",
+      "turns": 14,
+      "winner": "gemini"
+    },
+    {
+      "context": "home:gemini",
+      "game": "photon_laser_tactics",
+      "p0": "gemini",
+      "p1": "opus",
+      "reason": "Max turns reached",
+      "turns": 31,
+      "winner": null
+    },
+    {
+      "context": "neutral",
+      "game": "tictactoe",
+      "p0": "gemini",
+      "p1": "opus",
+      "reason": "win",
+      "turns": 7,
+      "winner": "gemini"
+    }
+  ],
+  "scoreboard": {
+    "codex": {
+      "draws": 1,
+      "losses": 0,
+      "points": 16,
+      "wins": 5
+    },
+    "gemini": {
+      "draws": 2,
+      "losses": 2,
+      "points": 8,
+      "wins": 2
+    },
+    "opus": {
+      "draws": 1,
+      "losses": 5,
+      "points": 1,
+      "wins": 0
+    }
+  },
+  "started_ts_ms": 1770947431843
+}
