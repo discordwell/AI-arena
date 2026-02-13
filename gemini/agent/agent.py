@@ -19,7 +19,7 @@ class GeminiAgent:
     """
 
     name: str = "gemini_subprocess_agent"
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3-pro-preview"
     turn_timeout_s: float = 3600.0
     _delegate: SubprocessAgent = field(init=False, repr=False)
 

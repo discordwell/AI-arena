@@ -115,7 +115,7 @@ def _query_claude(
         claude_bin,
         "--print",
         "--model", model,
-        "--effort", "low",
+        "--effort", "high",
         prompt,
     ]
 

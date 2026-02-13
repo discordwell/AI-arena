@@ -163,7 +163,7 @@ def _fallback_legal_move(legal_moves: list[Any]) -> Any:
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Gemini subprocess JSONL bot for ai-arena")
-    parser.add_argument("--model", default=os.environ.get("GEMINI_ARENA_MODEL", "gemini-2.5-flash"))
+    parser.add_argument("--model", default=os.environ.get("GEMINI_ARENA_MODEL", "gemini-3-pro-preview"))
     parser.add_argument("--api-key", default=os.environ.get("GOOGLE_API_KEY", ""))
     args = parser.parse_args()
 
