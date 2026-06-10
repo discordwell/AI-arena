@@ -63,6 +63,24 @@ def test_skysummit_winning_move_build_is_none() -> None:
     assert t.reason == "reach_level3"
 
 
+def test_skysummit_turn_limit_is_50_plies() -> None:
+    # Pins the tournament-speed cap (reduced from 200) documented in GAME.md.
+    g = _game()
+    assert g.max_ply == 50
+
+    s = {
+        "phase": "play",
+        "ply": g.max_ply - 1,
+        "board": [0] * 25,
+        "workers": [[0, 1], [23, 24]],
+        "winner": None,
+        "reason": "",
+    }
+    assert not g.terminal(s).is_terminal
+    s["ply"] = g.max_ply
+    assert g.terminal(s).is_terminal
+
+
 def test_skysummit_turn_limit_tiebreak() -> None:
     g = _game()
     board = [0] * 25

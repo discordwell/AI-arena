@@ -83,6 +83,22 @@ def test_photon_all_reported_legal_moves_apply_cleanly() -> None:
             assert s2["board"][r][c] is None, f"move did not vacate src: {m}"
 
 
+def test_photon_turn_limit_is_just_over_30_moves() -> None:
+    # Pins the tournament-speed cap so rules.md and the code stay in sync:
+    # the game is drawn once turn_count exceeds 30.
+    g = _game()
+    s = g.initial_state()
+
+    s["turn_count"] = 30
+    assert not g.terminal(s).is_terminal
+
+    s["turn_count"] = 31
+    t = g.terminal(s)
+    assert t.is_terminal
+    assert t.winner is None
+    assert t.reason == "Max turns reached"
+
+
 def test_photon_terminal_on_king_elimination() -> None:
     g = _game()
     s = g.initial_state()

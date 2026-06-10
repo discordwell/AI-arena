@@ -47,7 +47,7 @@ On your turn you choose one of your two workers and:
 
 ## Turn Limit Tie-break
 
-If the game reaches the turn limit (`200` total turns including placement turns), the winner is:
+If the game reaches the turn limit (`50` total turns including placement turns; reduced from 200 for tournament speed), the winner is:
 
 - Higher **altitude score** = sum of the heights under your two workers.
 - If tied, higher **peak** = the maximum height under either of your workers.

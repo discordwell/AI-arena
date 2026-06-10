@@ -96,7 +96,7 @@ Eruptions resolve fully before the turn ends. Chain reactions can cascade across
 1. **Crown captured**: You move onto the enemy Crown → you win.
 2. **Crown erupted**: Enemy Crown destroyed by eruption → you win.
 3. **No legal moves**: Opponent has no legal moves on their turn → you win.
-4. **Turn limit** (200 total plies): Most surviving pieces wins. Tie-break: highest Crown elevation. If still tied: draw.
+4. **Turn limit** (50 total plies; reduced from 200 for tournament speed): Most surviving pieces wins. Tie-break: highest Crown elevation. If still tied: draw.
 
 ## Move Encoding (JSON)
 

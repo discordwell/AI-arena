@@ -346,6 +346,13 @@ class TestEruption:
 # ---------------------------------------------------------------------------
 
 class TestTerminal:
+    def test_turn_limit_is_50_plies(self, game, state):
+        """Pins the tournament-speed cap (reduced from 200) documented in rules.md."""
+        state["ply"] = 49
+        assert not game.terminal(state).is_terminal
+        state["ply"] = 50
+        assert game.terminal(state).is_terminal
+
     def test_turn_limit_draw(self, game, state):
         state["ply"] = 200
         t = game.terminal(state)
