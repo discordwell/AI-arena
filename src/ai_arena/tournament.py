@@ -111,6 +111,63 @@ def _maybe_close(agent: Any) -> None:
         close()
 
 
+@dataclass(frozen=True, slots=True)
+class SeatOutcome:
+    winner_id: str | None
+    reason: str
+    turns: int
+    game: str
+    scored: bool  # False = voided by a game/harness crash; no points awarded
+
+
+def _play_seat(
+    *,
+    game_factory: Callable[[], Any],
+    game_label: str,
+    p0_id: str,
+    p1_id: str,
+    agent_factories: dict[str, Callable[[], Any]],
+    prime_pause: bool,
+    log_path: Path | None,
+) -> SeatOutcome:
+    """
+    Run one seated match without letting a buggy game or agent kill the whole
+    tournament (matches are expensive: every move can be an LLM call).
+
+    An agent that fails to start forfeits the match (the opponent wins, like a
+    timeout). A crash in the game code voids the match: it is recorded with
+    reason "match_error:..." but awards no points.
+    """
+    agent0: Any = None
+    agent1: Any = None
+    game_name = game_label  # refined to game.name once the game is constructed
+    try:
+        game = game_factory()
+        game_name = str(getattr(game, "name", game_label))
+
+        try:
+            agent0 = agent_factories[p0_id]()
+        except Exception as e:
+            return SeatOutcome(p1_id, f"agent_spawn_failed:{type(e).__name__}", 0, game_name, True)
+        try:
+            agent1 = agent_factories[p1_id]()
+        except Exception as e:
+            return SeatOutcome(p0_id, f"agent_spawn_failed:{type(e).__name__}", 0, game_name, True)
+
+        res: MatchResult = play_match(game, agent0, agent1, prime_pause=prime_pause, log_path=log_path)
+        winner_id = None if res.winner is None else (p0_id if res.winner == 0 else p1_id)
+        return SeatOutcome(winner_id, res.reason, res.turns, res.game, True)
+    except Exception as e:
+        detail = " ".join(str(e).split())[:200]
+        return SeatOutcome(None, f"match_error:{type(e).__name__}:{detail}", 0, game_name, False)
+    finally:
+        for agent in (agent0, agent1):
+            try:
+                _maybe_close(agent)
+            except Exception:
+                pass
+
+
 def run_tournament(
     *,
     competitors: list[Competitor],
@@ -126,78 +183,69 @@ def run_tournament(
     sb = _scoreboard_init(competitors)
     matches: list[MatchSummary] = []
 
-    # Build a map of competitor home games for "away" matches
-    home_games = {c.id: c.home_game for c in competitors}
-    neutral_game_factory = _game_factory(neutral_game)
+    # Resolve every spec up front so config typos fail fast, before any
+    # (potentially expensive) match runs.
+    game_factories = {c.id: _game_factory(c.home_game) for c in competitors}
+    game_labels = {c.id: c.home_game for c in competitors}
+    agent_factories = {c.id: _agent_factory(c.agent) for c in competitors}
+    neutral_factory = _game_factory(neutral_game)
 
     for a, b in _pairings(competitors):
         # Matches per pairing: a-home, b-home, + third competitor's home (or neutral fallback).
         others = [c for c in competitors if c.id not in (a.id, b.id)]
+        third_p0 = min(a.id, b.id)
         if others:
             third = others[0]
-            third_ctx = "away:" + third.id
-            third_factory = _game_factory(third.home_game)
-            third_p0 = min(a.id, b.id)
+            third_scenario = ("away:" + third.id, game_factories[third.id], game_labels[third.id], third_p0)
         else:
-            third_ctx = "neutral"
-            third_factory = neutral_game_factory
-            third_p0 = min(a.id, b.id)
+            third_scenario = ("neutral", neutral_factory, neutral_game, third_p0)
 
         scenarios = [
-            ("home:" + a.id, _game_factory(a.home_game), a.id),
-            ("home:" + b.id, _game_factory(b.home_game), b.id),
-            (third_ctx, third_factory, third_p0),
+            ("home:" + a.id, game_factories[a.id], game_labels[a.id], a.id),
+            ("home:" + b.id, game_factories[b.id], game_labels[b.id], b.id),
+            third_scenario,
         ]
 
-        for context, game_factory, p0_default in scenarios:
+        for context, game_factory, game_label, p0_default in scenarios:
             for r in range(rounds):
                 seats = [(p0_default, a.id if p0_default == b.id else b.id)]
                 if swap_starts:
                     seats.append((seats[0][1], seats[0][0]))
 
                 for p0_id, p1_id in seats:
-                    game = game_factory()
-                    p0 = a if a.id == p0_id else b
-                    p1 = b if p0 is a else a
-
-                    agent0 = _agent_factory(p0.agent)()
-                    agent1 = _agent_factory(p1.agent)()
-
                     log_path = None
                     if log_dir:
                         safe_ctx = context.replace(":", "_")
                         log_path = (log_dir / f"{a.id}_vs_{b.id}" / f"{safe_ctx}_r{r}_{p0_id}_starts.json")
 
-                    try:
-                        res: MatchResult = play_match(
-                            game,
-                            agent0,
-                            agent1,
-                            prime_pause=prime_pause,
-                            log_path=log_path,
-                        )
-                    finally:
-                        _maybe_close(agent0)
-                        _maybe_close(agent1)
+                    outcome = _play_seat(
+                        game_factory=game_factory,
+                        game_label=game_label,
+                        p0_id=p0_id,
+                        p1_id=p1_id,
+                        agent_factories=agent_factories,
+                        prime_pause=prime_pause,
+                        log_path=log_path,
+                    )
 
-                    winner_id = None if res.winner is None else (p0_id if res.winner == 0 else p1_id)
                     summary = MatchSummary(
                         context=context,
-                        game=res.game,
+                        game=outcome.game,
                         p0=p0_id,
                         p1=p1_id,
-                        winner=winner_id,
-                        reason=res.reason,
-                        turns=res.turns,
+                        winner=outcome.winner_id,
+                        reason=outcome.reason,
+                        turns=outcome.turns,
                     )
                     matches.append(summary)
-                    _apply_result(sb, p0_id, p1_id, winner_id)
+                    if outcome.scored:
+                        _apply_result(sb, p0_id, p1_id, outcome.winner_id)
 
                     # Live match result output
-                    w = winner_id or "DRAW"
+                    w = outcome.winner_id or ("DRAW" if outcome.scored else "VOID")
                     print(
                         f"  match {len(matches):>2}: [{context}] {p0_id} vs {p1_id}"
-                        f"  ->  {w} ({res.reason}, {res.turns}t)",
+                        f"  ->  {w} ({outcome.reason}, {outcome.turns}t)",
                         flush=True,
                     )
 

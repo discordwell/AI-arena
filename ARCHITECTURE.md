@@ -25,20 +25,29 @@ Two design rules shape everything below:
   checks `terminal` before each move; forfeits the mover on `TimeoutError`
   ("timeout"), any other exception ("agent_error"), a move not present in
   `legal_moves` ("illegal_move"), or an empty legal-move list
-  ("no_legal_moves"). Records per-move timing and can write a full JSON match
-  log (`result` + `final_state` + `final_render`). `prime_pause` implements
-  the arena rule granting an extra analysis cycle after prime-numbered turns.
+  ("no_legal_moves"). `MatchResult.turns` counts successfully applied moves
+  on every path; a forfeited attempt is recorded in `move_history` (with a
+  `note`) but not counted. Records per-move timing and can write a full JSON
+  match log (`result` + `final_state` + `final_render`). `prime_pause`
+  implements the arena rule granting an extra analysis cycle after
+  prime-numbered turns.
 - `loading.py` — `load_symbol("<path>:<symbol>")`, the dynamic-import
   mechanism the CLI/tournament use to reach games and agents in model
   folders.
 - `agents/` — built-ins: `human` (stdin), `random`, and `SubprocessAgent`,
   which speaks the JSONL protocol (`docs/protocol.md`) to a long-running bot
-  process with a per-turn timeout.
+  process with a per-turn timeout. The bot's stderr is drained on a
+  background thread (a chatty bot cannot deadlock the match by filling the
+  pipe buffer) and its tail is attached to the error when the bot dies.
 - `tournament.py` — round-robin from a TOML config (`arena.toml`). Each
   pairing plays three contexts: both competitors' home games plus the third
   competitor's home game (falls back to `neutral_game` when there is no
   third). Supports multiple rounds and `swap_starts`. Scoring: win 3 / draw
   1 / loss 0. Emits per-match logs and a JSON results file (`results.json`).
+  Specs are resolved up front (config typos fail fast), but per-match crashes
+  are contained so one bug cannot lose a whole expensive run: an agent that
+  fails to start forfeits its match (`agent_spawn_failed:...`), and a crash
+  in game code voids the match (`match_error:...`, recorded but no points).
 - `cli.py` — `ai-arena list-games | play | gui | tournament`.
 - `gui.py` — generic Tkinter board GUI for live matches and log replay.
 - `replay.py` — rebuilds the state sequence from a match log's move history;
@@ -80,8 +89,9 @@ The rules docs state the reduced caps and `tests/` pins them.
 
 ## Testing & CI
 
-- `tests/` — pytest suite for the engine, replay, subprocess agent, and all
-  three home games (move generation, rules edge cases, turn-limit pins).
+- `tests/` — pytest suite for the engine, replay, subprocess agent,
+  tournament crash containment, GUI log-name inference, and all three home
+  games (move generation, rules edge cases, turn-limit pins).
   `gemini/game/test_game.py` holds additional Photon tests that run from the
   repo root as well.
 - `.github/workflows/` — CI runs `pytest -q` on Python 3.12 for pushes to

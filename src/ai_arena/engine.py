@@ -39,7 +39,7 @@ class MatchResult:
     game: str
     winner: PlayerId | None
     reason: str
-    turns: int
+    turns: int  # successfully applied moves; a forfeited attempt is in move_history but not counted
     move_history: list[MoveRecord]
 
 
@@ -130,7 +130,7 @@ def play_match(
                 game=game.name,
                 winner=1 - player,
                 reason="illegal_move",
-                turns=turn,
+                turns=turn - 1,
                 move_history=history,
             )
             if log_path:

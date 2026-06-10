@@ -70,10 +70,10 @@ def _infer_game_spec_from_log(payload: dict[str, Any]) -> str | None:
     if name == "skysummit":
         root = _repo_root()
         return str(root / "codex" / "game" / "game.py") + ":CodexGame"
-    if name == "opus_game":
+    if name == "caldera":
         root = _repo_root()
         return str(root / "opus" / "game" / "game.py") + ":OpusGame"
-    if name == "gemini_game":
+    if name == "photon_laser_tactics":
         root = _repo_root()
         return str(root / "gemini" / "game" / "game.py") + ":GeminiGame"
     return None
@@ -1043,13 +1043,16 @@ def launch_gui(args: argparse.Namespace) -> int:
             final_state = self._states[-1]
             terminal = self._current_terminal()
 
+            # Engine convention: turns counts applied moves; a forfeited
+            # attempt stays in move_history (with a note) but is not counted.
+            applied_turns = sum(1 for r in self._moves if r.note is None)
             payload = {
                 "game": self._game.name,
                 "result": {
                     "game": self._game.name,
                     "winner": terminal.winner,
                     "reason": terminal.reason,
-                    "turns": len(self._moves),
+                    "turns": applied_turns,
                     "move_history": [
                         {
                             "turn": r.turn,

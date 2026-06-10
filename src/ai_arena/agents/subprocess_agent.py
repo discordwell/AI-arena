@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 import selectors
 import subprocess
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, TextIO
 
 from ..game import Game, PlayerId
 from ..json_types import JSONValue
+
+_STDERR_TAIL_LINES = 40
+_STDERR_LINE_CAP = 500
 
 
 @dataclass(slots=True)
@@ -17,7 +22,9 @@ class SubprocessAgent:
     JSONL bot protocol (see docs/protocol.md).
 
     The bot is a long-running process that reads one JSON object per line from stdin and
-    writes one JSON object per line to stdout.
+    writes one JSON object per line to stdout. Its stderr is drained on a background
+    thread (so a chatty bot can never block on a full pipe buffer) and the most recent
+    lines are attached to errors when the bot dies, for diagnosability.
     """
 
     command: list[str]
@@ -27,6 +34,9 @@ class SubprocessAgent:
     _stdin: TextIO = field(init=False, repr=False)
     _stdout: TextIO = field(init=False, repr=False)
     _sel: selectors.BaseSelector = field(init=False, repr=False)
+    _stderr_tail: deque[str] = field(init=False, repr=False)
+    _stderr_lock: threading.Lock = field(init=False, repr=False)
+    _stderr_thread: threading.Thread = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._proc = subprocess.Popen(
@@ -43,17 +53,64 @@ class SubprocessAgent:
         self._stdout: TextIO = self._proc.stdout
         self._sel = selectors.DefaultSelector()
         self._sel.register(self._stdout, selectors.EVENT_READ)
+        self._stderr_tail = deque(maxlen=_STDERR_TAIL_LINES)
+        self._stderr_lock = threading.Lock()
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr, name=f"{self.name}-stderr", daemon=True
+        )
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        stderr = self._proc.stderr
+        if stderr is None:  # pragma: no cover
+            return
+        try:
+            for line in stderr:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                if len(line) > _STDERR_LINE_CAP:
+                    line = line[:_STDERR_LINE_CAP] + "...[truncated]"
+                with self._stderr_lock:
+                    self._stderr_tail.append(line)
+        except Exception:
+            pass
+
+    def stderr_tail(self) -> str:
+        """Most recent stderr lines from the bot (bounded), for diagnostics."""
+        with self._stderr_lock:
+            return "\n".join(self._stderr_tail)
+
+    def _death_context(self) -> str:
+        # Give the drain thread a beat to consume the bot's last words before
+        # snapshotting; once the process is gone its stderr hits EOF quickly.
+        try:
+            self._proc.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            pass
+        if self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=0.5)
+        tail = self.stderr_tail()
+        return f"; bot stderr tail:\n{tail}" if tail else ""
 
     def close(self) -> None:
+        # getattr-guarded: __post_init__ may have failed partway (e.g. Popen
+        # raised), and __del__ still calls close() on the half-built instance.
+        proc = getattr(self, "_proc", None)
         try:
-            if self._proc.poll() is None:
-                self._proc.terminate()
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
                 try:
-                    self._proc.wait(timeout=1)
+                    proc.wait(timeout=1)
                 except subprocess.TimeoutExpired:
-                    self._proc.kill()
+                    proc.kill()
         finally:
-            self._sel.close()
+            sel = getattr(self, "_sel", None)
+            if sel is not None:
+                sel.close()
+            thread = getattr(self, "_stderr_thread", None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=0.5)
 
     def __del__(self) -> None:  # best-effort cleanup
         try:
@@ -69,7 +126,9 @@ class SubprocessAgent:
         legal_moves: list[JSONValue],
     ) -> JSONValue:
         if self._proc.poll() is not None:
-            raise RuntimeError(f"bot process exited with code {self._proc.returncode}")
+            raise RuntimeError(
+                f"bot process exited with code {self._proc.returncode}{self._death_context()}"
+            )
 
         msg = {
             "type": "turn",
@@ -79,8 +138,11 @@ class SubprocessAgent:
             "legal_moves": legal_moves,
             "ts_ms": int(time.time() * 1000),
         }
-        self._stdin.write(json.dumps(msg) + "\n")
-        self._stdin.flush()
+        try:
+            self._stdin.write(json.dumps(msg) + "\n")
+            self._stdin.flush()
+        except OSError as e:
+            raise RuntimeError(f"failed to send turn to bot: {e}{self._death_context()}") from e
 
         deadline = time.monotonic() + self.timeout_s
         while True:
@@ -94,7 +156,7 @@ class SubprocessAgent:
 
             line = self._stdout.readline()
             if not line:
-                raise RuntimeError("bot stdout closed")
+                raise RuntimeError(f"bot stdout closed{self._death_context()}")
             line = line.strip()
             if not line:
                 continue
