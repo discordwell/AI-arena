@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 
 import sys as _sys
@@ -15,10 +14,6 @@ from board import Board, Piece, PieceType, DIRS
 RED = "\033[91m"
 BLUE = "\033[94m"
 RESET = "\033[0m"
-# Backgrounds
-BG_RED = "\033[41m"
-BG_BLUE = "\033[44m"
-BG_BLACK = "\033[40m"
 
 @dataclass(slots=True)
 class GeminiGame:
@@ -68,17 +63,8 @@ class GeminiGame:
                 p = board.get(r, c)
                 if p and p.player == player:
                     # 1. Move Actions
-                    for i, (dr, dc) in enumerate(DIRS):
+                    for dr, dc in DIRS:
                         nr, nc = r + dr, c + dc
-                        if board.move_piece(r, c, nr, nc): # Check if valid (bounds + empty)
-                             # Revert is needed if we actually modified, but move_piece does modify.
-                             # But here we just want to know if valid.
-                             # move_piece checks basic validity.
-                             # Actually `board.move_piece` modifies the board. 
-                             # We should check `in_bounds` and `get` manually or clone.
-                             # Optimization: Manual check is faster.
-                            pass
-                        
                         if board.in_bounds(nr, nc) and board.get(nr, nc) is None:
                              moves.append({
                                  "type": "move",
@@ -133,9 +119,7 @@ class GeminiGame:
              return Terminal(is_terminal=True, winner=0, reason="Player 1 King eliminated")
         if kings[1] and not kings[0]: # Player 0 lost
              return Terminal(is_terminal=True, winner=1, reason="Player 0 King eliminated")
-        # Fix logic: "kings" stores ALIVE status. 
-        # If kings[0] is True, Player 0 is ALIVE.
-        
+
         if state["turn_count"] > 30: # Max turns (capped for tournament speed)
              return Terminal(is_terminal=True, winner=None, reason="Max turns reached")
 
