@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shlex
+import sys
 import time
 import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .engine import MatchResult, play_match
+from .engine import MatchResult, atomic_write_json, play_match
 from .games.tictactoe import TicTacToe
 from .loading import load_symbol
 
@@ -36,6 +36,7 @@ class MatchSummary:
 class TournamentResult:
     started_ts_ms: int
     duration_ms: int
+    complete: bool  # False in mid-run snapshots written to the results file
     matches: list[MatchSummary]
     scoreboard: dict[str, dict[str, int]]
 
@@ -176,6 +177,7 @@ def run_tournament(
     swap_starts: bool,
     prime_pause: bool,
     log_dir: Path | None,
+    out_path: Path | None = None,
 ) -> TournamentResult:
     started = time.time()
     started_ts_ms = int(started * 1000)
@@ -183,12 +185,38 @@ def run_tournament(
     sb = _scoreboard_init(competitors)
     matches: list[MatchSummary] = []
 
+    def snapshot(complete: bool) -> TournamentResult:
+        return TournamentResult(
+            started_ts_ms=started_ts_ms,
+            duration_ms=int((time.time() - started) * 1000),
+            complete=complete,
+            matches=matches,
+            scoreboard=sb,
+        )
+
+    def write_results(result: TournamentResult) -> None:
+        # Best-effort: the results file is a convenience summary (matches are
+        # also in per-match logs and on stdout); a failed write must never
+        # abort the remaining, expensive matches.
+        if not out_path:
+            return
+        try:
+            atomic_write_json(out_path, asdict(result))
+        except Exception as e:
+            print(f"warning: failed to write results to {out_path} ({type(e).__name__}: {e})", file=sys.stderr)
+
     # Resolve every spec up front so config typos fail fast, before any
     # (potentially expensive) match runs.
     game_factories = {c.id: _game_factory(c.home_game) for c in competitors}
     game_labels = {c.id: c.home_game for c in competitors}
     agent_factories = {c.id: _agent_factory(c.agent) for c in competitors}
     neutral_factory = _game_factory(neutral_game)
+
+    # Fence the results file only after fail-fast validation passed (a config
+    # typo must not clobber a previous run's results): a leftover file from a
+    # previous run with the same --out would otherwise pose as this run's live
+    # data until the first match finishes (hours, with LLM agents).
+    write_results(snapshot(complete=False))
 
     for a, b in _pairings(competitors):
         # Matches per pairing: a-home, b-home, + third competitor's home (or neutral fallback).
@@ -241,6 +269,11 @@ def run_tournament(
                     if outcome.scored:
                         _apply_result(sb, p0_id, p1_id, outcome.winner_id)
 
+                    # Tournaments are expensive (every move can be an LLM
+                    # call); rewrite the results file after each match so a
+                    # crashed or interrupted run keeps its scoreboard.
+                    write_results(snapshot(complete=False))
+
                     # Live match result output
                     w = outcome.winner_id or ("DRAW" if outcome.scored else "VOID")
                     print(
@@ -249,13 +282,9 @@ def run_tournament(
                         flush=True,
                     )
 
-    duration_ms = int((time.time() - started) * 1000)
-    return TournamentResult(
-        started_ts_ms=started_ts_ms,
-        duration_ms=duration_ms,
-        matches=matches,
-        scoreboard=sb,
-    )
+    result = snapshot(complete=True)
+    write_results(result)
+    return result
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -294,6 +323,8 @@ def cmd_tournament(args: argparse.Namespace) -> int:
     if cfg.get("log_dir"):
         log_dir = Path(str(cfg["log_dir"])).expanduser().resolve()
 
+    out_path = Path(args.out).expanduser().resolve() if args.out else None
+
     result = run_tournament(
         competitors=competitors,
         neutral_game=neutral_game,
@@ -301,16 +332,14 @@ def cmd_tournament(args: argparse.Namespace) -> int:
         swap_starts=swap_starts,
         prime_pause=prime_pause,
         log_dir=log_dir,
+        out_path=out_path,
     )
 
     print("scoreboard:")
     for cid, row in sorted(result.scoreboard.items(), key=lambda kv: (-kv[1]["points"], kv[0])):
         print(f"  {cid}: {row}")
 
-    if args.out:
-        out_path = Path(args.out).expanduser().resolve()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(asdict(result), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if out_path:
         print(f"out: {out_path}")
 
     return 0

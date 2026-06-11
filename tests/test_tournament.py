@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ def _run(competitors: list[Competitor], **kw):
         swap_starts=kw.get("swap_starts", False),
         prime_pause=False,
         log_dir=None,
+        out_path=kw.get("out_path"),
     )
 
 
@@ -132,12 +134,88 @@ def test_agent_spawn_failure_forfeits_to_opponent(tmp_path: Path) -> None:
     assert res.scoreboard["b"]["points"] == 0
 
 
+def test_results_file_written_after_every_match(tmp_path: Path) -> None:
+    # Tournament runs are expensive; the results file must be written as the
+    # run progresses (complete=false), not only at the end, so a crash or
+    # Ctrl-C keeps the scoreboard so far. A spy home game observes the file
+    # at construction time, i.e. at the start of each of its matches.
+    out = tmp_path / "results.json"
+    obs = tmp_path / "observations.jsonl"
+    spy = tmp_path / "spy_game.py"
+    spy.write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "from ai_arena.games.tictactoe import TicTacToe\n"
+        "\n"
+        f"OUT = Path({str(out)!r})\n"
+        f"OBS = Path({str(obs)!r})\n"
+        "\n"
+        "class SpyGame(TicTacToe):\n"
+        "    def __init__(self):\n"
+        "        super().__init__()\n"
+        "        if OUT.exists():\n"
+        "            data = json.loads(OUT.read_text(encoding='utf-8'))\n"
+        "            entry = {'exists': True, 'matches': len(data['matches']),\n"
+        "                     'complete': data['complete']}\n"
+        "        else:\n"
+        "            entry = {'exists': False}\n"
+        "        with OBS.open('a', encoding='utf-8') as f:\n"
+        "            f.write(json.dumps(entry) + '\\n')\n",
+        encoding="utf-8",
+    )
+
+    spy_spec = str(spy) + ":SpyGame"
+    comps = [
+        Competitor(id="a", home_game=spy_spec, agent="random"),
+        Competitor(id="b", home_game=spy_spec, agent="random"),
+    ]
+    res = _run(comps, out_path=out)
+
+    # Match order: home:a (spy), home:b (spy), neutral (tictactoe).
+    entries = [json.loads(line) for line in obs.read_text(encoding="utf-8").splitlines()]
+    assert len(entries) == 2
+    # The fence write lands before any match, so match 1 already sees the file.
+    assert entries[0] == {"exists": True, "matches": 0, "complete": False}
+    assert entries[1] == {"exists": True, "matches": 1, "complete": False}
+
+    final = json.loads(out.read_text(encoding="utf-8"))
+    assert final["complete"] is True
+    assert len(final["matches"]) == 3
+    assert final["scoreboard"] == res.scoreboard
+    assert list(out.parent.glob("*.tmp")) == []
+
+
+def test_results_write_failure_does_not_abort_run(tmp_path: Path, capsys) -> None:
+    # The results file is a convenience summary; failing to write it must not
+    # cancel the remaining (expensive) matches.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory", encoding="utf-8")
+    out = blocker / "results.json"  # parent is a file -> every write fails
+
+    comps = [
+        Competitor(id="a", home_game="tictactoe", agent="random"),
+        Competitor(id="b", home_game="tictactoe", agent="random"),
+    ]
+    res = _run(comps, out_path=out)
+
+    assert len(res.matches) == 3  # the run completed despite the write failures
+    assert all(m.reason in {"win", "draw"} for m in res.matches)
+    assert "failed to write results" in capsys.readouterr().err
+
+
 def test_bad_spec_still_fails_fast_before_any_match(tmp_path: Path) -> None:
     # Config typos (unloadable specs) should abort at startup, not midway
-    # through an expensive tournament.
+    # through an expensive tournament — and must not touch a previous run's
+    # results file (the fence write happens only after validation).
+    prior = '{"complete": true, "matches": ["precious"]}'
+    out = tmp_path / "results.json"
+    out.write_text(prior, encoding="utf-8")
+
     comps = [
         Competitor(id="a", home_game=str(tmp_path / "missing.py") + ":Nope", agent="random"),
         Competitor(id="b", home_game="tictactoe", agent="random"),
     ]
     with pytest.raises(FileNotFoundError):
-        _run(comps)
+        _run(comps, out_path=out)
+
+    assert out.read_text(encoding="utf-8") == prior

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .engine import atomic_write_json
 from .game import Game, PlayerId, Terminal
 from .json_types import JSONValue
 from .loading import load_symbol
@@ -1068,8 +1068,7 @@ def launch_gui(args: argparse.Namespace) -> int:
                 "final_render": self._game.render(final_state),
             }
             path = Path(path).expanduser().resolve()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            atomic_write_json(path, payload)
 
         # --- rendering / refresh ---
 

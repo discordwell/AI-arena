@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from helpers import FirstLegalAgent
+
 from ai_arena.engine import play_match
 from ai_arena.games.tictactoe import TicTacToe
 
@@ -23,13 +25,6 @@ class TimeoutAgent:
 
     def select_move(self, game, state, player, legal_moves):
         raise TimeoutError("too slow")
-
-
-class FirstLegalAgent:
-    name = "first"
-
-    def select_move(self, game, state, player, legal_moves):
-        return legal_moves[0]
 
 
 def test_random_vs_random_finishes() -> None:

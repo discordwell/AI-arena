@@ -4,7 +4,7 @@ AI Arena is a PvPvP tournament harness: three LLM competitors (Codex, Opus,
 Gemini) each design a 2-player turn-based game ("home field") and field an
 agent that plays on its own game, on rivals' games, and on a neutral baseline.
 
-Two design rules shape everything below:
+Three design rules shape everything below:
 
 1. **Everything on the wire is JSON.** Game states and moves are plain
    JSON-serializable values, so games and agents can be replayed from logs,
@@ -13,6 +13,14 @@ Two design rules shape everything below:
    per-model folders *outside* the installed package and are loaded
    dynamically; the engine treats exceptions, timeouts, and illegal moves as
    forfeits rather than crashes.
+3. **Run artifacts are durable, and durability is never load-bearing.**
+   Matches can be hours of LLM calls, so match logs and tournament results
+   are written atomically (unique temp file, fsynced, renamed into place)
+   and incrementally as the run progresses — a crash or Ctrl-C keeps
+   everything up to the last snapshot, and even power loss leaves a valid
+   recent snapshot rather than a torn file. Progress writes are best-effort:
+   a failed snapshot warns and plays on, because the protection must never
+   abort the match it protects.
 
 ## Control Harness (`src/ai_arena/`, installed as `ai-arena`)
 
@@ -28,9 +36,13 @@ Two design rules shape everything below:
   ("no_legal_moves"). `MatchResult.turns` counts successfully applied moves
   on every path; a forfeited attempt is recorded in `move_history` (with a
   `note`) but not counted. Records per-move timing and can write a full JSON
-  match log (`result` + `final_state` + `final_render`). `prime_pause`
-  implements the arena rule granting an extra analysis cycle after
-  prime-numbered turns.
+  match log (`result` + `final_state` + `final_render`). Per rule 3 the log
+  is snapshotted as moves are applied with a stub result
+  (`reason: "in_progress"`), throttled to ~1/s so fast agents don't make the
+  rewrite O(n²); the final write records the real result, and partial logs
+  replay normally (replay falls back to the engine-recorded `in_progress`
+  terminal). `prime_pause` implements the arena rule granting an extra
+  analysis cycle after prime-numbered turns.
 - `loading.py` — `load_symbol("<path>:<symbol>")`, the dynamic-import
   mechanism the CLI/tournament use to reach games and agents in model
   folders.
@@ -43,7 +55,10 @@ Two design rules shape everything below:
   pairing plays three contexts: both competitors' home games plus the third
   competitor's home game (falls back to `neutral_game` when there is no
   third). Supports multiple rounds and `swap_starts`. Scoring: win 3 / draw
-  1 / loss 0. Emits per-match logs and a JSON results file (`results.json`).
+  1 / loss 0. Emits per-match logs and a JSON results file (`results.json`),
+  the latter rewritten per rule 3 before the first match (fencing out stale
+  data from a previous run with the same `--out`) and after every match;
+  `complete: false` until the run finishes.
   Specs are resolved up front (config typos fail fast), but per-match crashes
   are contained so one bug cannot lose a whole expensive run: an agent that
   fails to start forfeits its match (`agent_spawn_failed:...`), and a crash

@@ -44,3 +44,29 @@ def test_replay_handles_illegal_move_forfeit_from_log_payload() -> None:
     assert rep.terminal.is_terminal
     assert rep.terminal.winner == 0
     assert rep.terminal.reason == "illegal_move"
+
+
+def test_replay_of_in_progress_snapshot_log() -> None:
+    # The engine rewrites the log after every applied move with a stub result
+    # (reason "in_progress") so crashed matches stay replayable. The replay
+    # falls back to that engine result when game rules say non-terminal.
+    game = TicTacToe()
+    payload = {
+        "game": "tictactoe",
+        "result": {
+            "game": "tictactoe",
+            "winner": None,
+            "reason": "in_progress",
+            "turns": 2,
+            "move_history": [
+                {"turn": 1, "player": 0, "move": 0, "ms": 0.0, "note": None},
+                {"turn": 2, "player": 1, "move": 3, "ms": 0.0, "note": None},
+            ],
+        },
+    }
+
+    rep = replay_from_log_payload(game, payload)
+    assert len(rep.states) == 3
+    assert rep.terminal.is_terminal  # labeled via the engine-result fallback
+    assert rep.terminal.winner is None
+    assert rep.terminal.reason == "in_progress"

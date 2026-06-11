@@ -2,6 +2,34 @@
 
 ## Session Summaries
 
+### 2026-06-11 ~00:30 UTC — Durable run artifacts (logs survive crashes)
+- Match logs are now incremental + atomic: `play_match` snapshots the log as
+  moves apply (`reason: "in_progress"`, throttled ~1/s via
+  `log_snapshot_interval_s`), so a game crash / Ctrl-C / SIGKILL keeps the
+  history; previously a mid-match crash lost everything (match_error voided
+  with no log). Final write replaces the stub; partial logs replay fine.
+- `atomic_write_json` (engine): unique mkstemp temp + fsync + rename, umask
+  perms restored (mkstemp's 0600 broke other readers), temp cleaned on
+  failure; `default=repr` is opt-in (match logs only). Shared by engine,
+  tournament, and GUI save-log.
+- Tournament `--out` results now written before match 1 (fences stale data
+  from a prior run; only after fail-fast spec validation so a config typo
+  can't clobber a previous run's results) and after every match
+  (`complete: false` until done). Snapshot/results writes are BEST-EFFORT
+  (warn to stderr, play on) — durability must never abort the run it
+  protects.
+- New tests: tests/test_match_log.py (partial-log survival, throttle,
+  best-effort snapshot, repr fallback), tests/test_cli.py (first CLI
+  coverage), tournament fence/incremental/write-failure tests; shared
+  FirstLegalAgent moved to tests/helpers.py. 84 → 97 tests.
+- Wet-tested: SIGKILL mid-tournament leaves parseable results.json
+  (complete:false, finished matches scored) + in_progress log for the
+  in-flight match; replayed a partial log through GUI inference.
+- Multi-agent review (9 finders + sweep) drove the hardening: unguarded
+  snapshot writes, results-write containment, fsync, tmp-name race, O(n²)
+  rewrite, double-asdict, perms regression, fence-before-validation were all
+  found and fixed this session.
+
 ### 2026-06-10 ~08:40 UTC — Harness robustness pass
 - Fixed GUI log replay: `_infer_game_spec_from_log` used stale names
   (`opus_game`, `gemini_game`); real names are `caldera` and
