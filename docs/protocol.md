@@ -41,9 +41,15 @@ Selectable by name on the CLI (`--p0`/`--p1`) and in `arena.toml`:
   immediately winning move, otherwise avoids moves that let the opponent win (or
   lose) on the next turn, otherwise plays randomly. Stronger than `random` but
   intentionally shallow (1 ply each way).
+- `search` — a game-agnostic depth-limited negamax (alpha-beta) using only this
+  protocol, scoring leaves by terminal outcome only (win/loss/draw within the
+  search horizon). It plays perfectly on small games (never loses tic-tac-toe)
+  and acts like a deeper-horizon `greedy` on larger ones. A per-turn
+  `node_budget` bounds its cost on high-branching games.
 
-`random` and `greedy` accept a `seed` for reproducible play; `ai-arena play
---seed N` wires it through (each seat gets a distinct derived seed).
+`random`, `greedy`, and `search` accept a `seed` for reproducible play;
+`ai-arena play --seed N` wires it through (each seat gets a distinct derived
+seed).
 
 ## Subprocess JSONL Agent Protocol
 

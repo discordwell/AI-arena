@@ -46,12 +46,18 @@ Three design rules shape everything below:
 - `loading.py` — `load_symbol("<path>:<symbol>")`, the dynamic-import
   mechanism the CLI/tournament use to reach games and agents in model
   folders.
-- `agents/` — built-ins: `human` (stdin), `random`, `greedy`, and
+- `agents/` — built-ins: `human` (stdin), `random`, `greedy`, `search`, and
   `SubprocessAgent`. `greedy` is a game-agnostic baseline (in `greedy.py`) that
   uses only the `Game` protocol — it grabs an immediate win, else avoids moves
   that let the opponent win or that lose on the spot, else plays randomly;
-  shallow (1 ply each way) but a real skill floor above `random`. `random` and
-  `greedy` take an optional `seed` for reproducible play (`ai-arena play
+  shallow (1 ply each way) but a real skill floor above `random`. `search`
+  (in `search.py`) is the next rung: a game-agnostic depth-limited negamax with
+  alpha-beta, scoring leaves by terminal outcome only (win/loss/draw within the
+  horizon). It plays perfectly on games small enough to search to the end (it
+  never loses tic-tac-toe) and behaves like a deeper-horizon `greedy` on the
+  larger arena games; a per-turn `node_budget` (default 40k) bounds its cost on
+  high-branching games, like `greedy`'s `safety_budget`. `random`, `greedy`, and
+  `search` take an optional `seed` for reproducible play (`ai-arena play
   --seed`). `SubprocessAgent` speaks the JSONL protocol (`docs/protocol.md`) to a
   long-running bot process with a per-turn timeout. The bot's stderr is drained
   on a background thread (a chatty bot cannot deadlock the match by filling the
@@ -110,8 +116,9 @@ The rules docs state the reduced caps and `tests/` pins them.
 ## Testing & CI
 
 - `tests/` — pytest suite for the engine, replay, subprocess agent,
-  tournament crash containment, GUI log-name inference, and all three home
-  games (move generation, rules edge cases, turn-limit pins).
+  tournament crash containment, GUI log-name inference, the built-in baseline
+  agents (`greedy`, `search` — tactics, optimal tic-tac-toe play, robustness),
+  and all three home games (move generation, rules edge cases, turn-limit pins).
   `gemini/game/test_game.py` holds additional Photon tests that run from the
   repo root as well.
 - `.github/workflows/` — CI runs `pytest -q` on Python 3.12 for pushes to

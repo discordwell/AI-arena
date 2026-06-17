@@ -43,6 +43,10 @@ def _load_agent(spec: str) -> Any:
         from .agents.greedy import GreedyAgent
 
         return GreedyAgent()
+    if spec == "search":
+        from .agents.search import SearchAgent
+
+        return SearchAgent()
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
         import shlex

@@ -35,9 +35,12 @@ ai-arena list-games
 ai-arena list-agents
 ai-arena play tictactoe --p0 human --p1 random
 
-# Built-in baselines: `random` and `greedy` (a game-agnostic 1-ply
-# win/loss-aware player). `--seed` makes a match with built-in agents reproducible.
+# Built-in baselines, weakest to strongest: `random`, `greedy` (a game-agnostic
+# 1-ply win/loss-aware player), and `search` (depth-limited alpha-beta negamax;
+# plays tic-tac-toe perfectly). `--seed` makes a match with built-in agents
+# reproducible.
 ai-arena play tictactoe --p0 greedy --p1 random --seed 1
+ai-arena play tictactoe --p0 search --p1 greedy --seed 1
 
 ai-arena tournament --config arena.toml
 

@@ -2,6 +2,38 @@
 
 ## Session Summaries
 
+### 2026-06-17 ~UTC — Add `search` baseline agent (depth-limited alpha-beta)
+- New built-in `SearchAgent` (`src/ai_arena/agents/search.py`): game-agnostic
+  negamax with alpha-beta, using ONLY the Game protocol. Leaves scored by
+  terminal outcome only (`+(WIN+depth)` win / `-(WIN+depth)` loss-or-no-moves /
+  `0` draw / `0` at the depth horizon). With no domain heuristic it plays
+  perfectly on games small enough to search to the end (never loses tic-tac-toe;
+  two searchers always draw) and behaves like a deeper-horizon `greedy` on the
+  big arena games. Defaults: `max_depth=12`, `node_budget=40_000` (bounds
+  worst-case cost like greedy's `safety_budget`; its alpha-beta search of
+  tic-tac-toe costs ~21k node expansions from the opening worst case, well under
+  budget, so it never truncates there). Seeded
+  shuffle for deterministic tie-breaks; swallows speculative game-call
+  exceptions and always returns an element of `legal_moves`.
+- Wired into all loaders (cli/tournament/gui) + `list-agents` + `--seed`; help
+  text and `_BUILTIN_AGENTS` updated (the cli drift-guard test now covers it).
+  Also added `GreedyAgent`+`SearchAgent` to `agents/__init__.__all__` (greedy was
+  a prior omission).
+- Wet-tested: search(p0) vs random = 0 losses over 100 tictactoe games (both
+  seats); search vs greedy = 0 losses, wins net; search-vs-search = 30/30 draws;
+  finds mate-in-1 and a 3-ply forced win greedy's 1-ply horizon misses; CLI
+  matches on Caldera/Skysummit complete cleanly; same-seed runs reproduce; a
+  search-vs-random tournament scores correctly (search 5W/0L/1D). Per-move time
+  budget-bounded: ~0.15-1.3s on the heavy games.
+- Verified there is NO infinite-loop bug in Photon's `fire_lasers` (the laser
+  step is injective/reversible on the finite (pos,dir) state space, so a beam
+  can only exit or return to its own shooter and break; 200k random configs cap
+  at path length 40). Left the laser code as-is.
+- Tests: tests/test_search.py (16 tests: tactics, optimal tic-tac-toe vs
+  random/greedy, two-searchers-draw, legal-move invariant, determinism,
+  node-budget bound, inner-exception robustness, Caldera generality). 100%
+  coverage of search.py. 109 → 124 tests, suite ~3.1s.
+
 ### 2026-06-17 ~UTC — Add `greedy` baseline agent + reproducible seeding
 - New built-in `GreedyAgent` (`src/ai_arena/agents/greedy.py`): game-agnostic,
   uses ONLY the Game protocol. Per turn: (1) grab an immediate win; (2) else
