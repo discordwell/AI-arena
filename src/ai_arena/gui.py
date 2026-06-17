@@ -47,6 +47,10 @@ def _load_agent(spec: str) -> Any:
         from .agents.search import SearchAgent
 
         return SearchAgent()
+    if spec == "mcts":
+        from .agents.mcts import MctsAgent
+
+        return MctsAgent()
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
         import shlex

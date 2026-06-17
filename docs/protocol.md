@@ -46,8 +46,15 @@ Selectable by name on the CLI (`--p0`/`--p1`) and in `arena.toml`:
   search horizon). It plays perfectly on small games (never loses tic-tac-toe)
   and acts like a deeper-horizon `greedy` on larger ones. A per-turn
   `node_budget` bounds its cost on high-branching games.
+- `mcts` — a game-agnostic Monte Carlo Tree Search (UCT selection, uniform
+  random rollouts, most-visited root move) using only this protocol. Unlike
+  `search`, it estimates positions from random playouts instead of a fixed
+  horizon, so it is the strongest baseline on the larger arena games — though
+  its strength depends on random play reaching decisive endings (weak on games
+  that mostly draw under random play). Bounded per turn by `iterations` and a
+  `node_budget`.
 
-`random`, `greedy`, and `search` accept a `seed` for reproducible play;
+`random`, `greedy`, `search`, and `mcts` accept a `seed` for reproducible play;
 `ai-arena play --seed N` wires it through (each seat gets a distinct derived
 seed).
 

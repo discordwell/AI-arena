@@ -2,6 +2,42 @@
 
 ## Session Summaries
 
+### 2026-06-17 ~UTC — Add `mcts` baseline agent (Monte Carlo Tree Search)
+- New built-in `MctsAgent` (`src/ai_arena/agents/mcts.py`): game-agnostic UCT
+  MCTS using ONLY the Game protocol — selection (negamax UCT), expansion, a
+  uniform random rollout to terminal / `rollout_depth` horizon, backprop; plays
+  the most-visited root child (robust choice). Tracks the mover by alternating
+  from the root player (the engine's strict alternation). Defaults: `iterations`
+  800, `node_budget` 50k (hard cap on apply_move calls, like search/greedy),
+  `rollout_depth` 60, `exploration` 1.4. Seeded (shuffles moves + rollout RNG)
+  → fully deterministic. Same robustness contract as search/greedy: always
+  returns an element of legal_moves, swallows speculative game-call exceptions,
+  scores a no-legal-moves position as a loss for the mover (engine forfeit rule).
+- Why it's the next rung above `search`: `search` has no domain heuristic, so
+  past its horizon it scores everything 0 and plays shallowly on the big games.
+  MCTS substitutes random playouts for that missing heuristic, so it keeps
+  improving with simulations on Caldera/Skysummit. KEY CAVEAT (documented):
+  MCTS strength tracks how informative random play is — on Photon, where ~35/40
+  random games hit the turn-cap DRAW, rollouts carry almost no signal and it
+  plays no better than random. Verified random-vs-random terminal mix per game
+  before relying on rollouts.
+- Wet-tested (full defaults): beats greedy 12-0 on Caldera and 8-4 on Skysummit
+  (both seat-swapped), 18/20 vs random on tictactoe (0 losses), draws itself 20/20,
+  near-perfect vs `search` (draws ~9/10, the rare loss is random-rollout
+  imperfection vs a perfect solver — NOT claimed to "never lose" tictactoe like
+  search does). Per-move ~160-680ms on Caldera (budget-bounded; comparable to
+  search). CLI/tournament/benchmark all drive it cleanly.
+- Wired into all loaders (cli/tournament/gui/benchmark) + `list-agents` +
+  `--seed`; help text + `_BUILTIN_AGENTS` + `agents/__init__.__all__` updated
+  (cli drift-guard test covers the new name). Docs: README baselines, both
+  ARCHITECTURE agent + testing sections, docs/protocol.md.
+- Tests: tests/test_mcts.py (17: tactics — take win / block / forced win /
+  starve-opponent; tictactoe strength — never-loses-random, beats-random,
+  two-MCTS-mostly-draw, beats-greedy; invariants — legal-move, determinism,
+  seed-variety, single-move short-circuit, never-raises, inner-speculation
+  swallowed, node-budget bound; end-to-end clean play + Caldera generality).
+  139 → 156 tests, suite ~5.3s → ~10s.
+
 ### 2026-06-17 ~UTC — Add `benchmark` command (head-to-head agent eval)
 - New `ai-arena benchmark <game> --p0 <a> --p1 <b> --games N [--seed S]
   [--no-swap] [--out f] [--quiet]` (`src/ai_arena/benchmark.py`): plays N

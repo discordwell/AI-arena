@@ -26,8 +26,9 @@ SeededAgentFactory = Callable[[int | None], Any]
 def _seeded_agent_factory(spec: str) -> SeededAgentFactory:
     """
     Resolve an agent spec to a per-game factory, threading a per-game seed into
-    the built-in seedable agents (``random`` / ``greedy`` / ``search``) so that
-    repeated games vary yet the whole benchmark is reproducible under ``--seed``.
+    the built-in seedable agents (``random`` / ``greedy`` / ``search`` /
+    ``mcts``) so that repeated games vary yet the whole benchmark is
+    reproducible under ``--seed``.
 
     Non-seedable built-ins, subprocess bots, and ``<path>:<symbol>`` agents
     ignore the seed (they have no seed parameter to thread).
@@ -49,6 +50,10 @@ def _seeded_agent_factory(spec: str) -> SeededAgentFactory:
         from .agents.search import SearchAgent
 
         return lambda seed: SearchAgent(seed=seed)
+    if spec == "mcts":
+        from .agents.mcts import MctsAgent
+
+        return lambda seed: MctsAgent(seed=seed)
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
 
@@ -325,8 +330,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 def load_benchmark_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("benchmark", help="Play many games between two agents and report head-to-head rates")
     p.add_argument("game", help="Built-in name (e.g. tictactoe) or '<path>:<symbol>'")
-    p.add_argument("--p0", required=True, help="Contestant A: random|greedy|search|subprocess:<cmd>|<path>:<symbol>")
-    p.add_argument("--p1", required=True, help="Contestant B: random|greedy|search|subprocess:<cmd>|<path>:<symbol>")
+    p.add_argument("--p0", required=True, help="Contestant A: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
+    p.add_argument("--p1", required=True, help="Contestant B: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
     p.add_argument("--games", type=int, default=100, help="Number of games to play (default 100)")
     p.add_argument(
         "--seed",
