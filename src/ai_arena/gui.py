@@ -39,6 +39,10 @@ def _load_agent(spec: str) -> Any:
         from .agents.random_agent import RandomAgent
 
         return RandomAgent()
+    if spec == "greedy":
+        from .agents.greedy import GreedyAgent
+
+        return GreedyAgent()
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
         import shlex

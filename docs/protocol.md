@@ -27,6 +27,24 @@ Agents are objects with:
 - `name: str`
 - `select_move(game, state, player, legal_moves) -> JSONValue`
 
+`select_move` must return one of the supplied `legal_moves` (anything else is a
+forfeit). It may raise `TimeoutError` (treated as a timeout) or any other
+exception (treated as an agent error) — both forfeit the turn.
+
+### Built-in agents
+
+Selectable by name on the CLI (`--p0`/`--p1`) and in `arena.toml`:
+
+- `human` — reads a move index from stdin.
+- `random` — picks a uniformly random legal move.
+- `greedy` — a game-agnostic baseline using only this protocol: it takes an
+  immediately winning move, otherwise avoids moves that let the opponent win (or
+  lose) on the next turn, otherwise plays randomly. Stronger than `random` but
+  intentionally shallow (1 ply each way).
+
+`random` and `greedy` accept a `seed` for reproducible play; `ai-arena play
+--seed N` wires it through (each seat gets a distinct derived seed).
+
 ## Subprocess JSONL Agent Protocol
 
 To use a non-Python agent (or to wrap a model harness), run an executable and

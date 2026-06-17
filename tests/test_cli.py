@@ -14,6 +14,19 @@ def test_list_games(capsys) -> None:
     assert "tictactoe" in out.splitlines()
 
 
+def test_list_agents_lists_loadable_builtins(capsys) -> None:
+    # Guards against drift between the advertised list and the loader branches:
+    # every name `list-agents` prints must actually load a usable agent.
+    from ai_arena.cli import _BUILTIN_AGENTS, _load_agent
+
+    assert main(["list-agents"]) == 0
+    assert capsys.readouterr().out.split() == list(_BUILTIN_AGENTS)
+    for name in _BUILTIN_AGENTS:
+        agent = _load_agent(name)
+        assert callable(getattr(agent, "select_move", None))
+        assert isinstance(agent.name, str)
+
+
 def test_play_reports_result_and_writes_log(tmp_path: Path, capsys) -> None:
     log = tmp_path / "logs" / "match.json"
     rc = main(["play", "tictactoe", "--p0", "random", "--p1", "random", "--log", str(log)])

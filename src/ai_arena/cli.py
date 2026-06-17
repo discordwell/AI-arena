@@ -25,7 +25,7 @@ def _load_game(spec: str) -> Any:
     return obj() if callable(obj) else obj
 
 
-def _load_agent(spec: str) -> Any:
+def _load_agent(spec: str, *, seed: int | None = None) -> Any:
     if spec == "human":
         from .agents.human import HumanAgent
 
@@ -33,7 +33,11 @@ def _load_agent(spec: str) -> Any:
     if spec == "random":
         from .agents.random_agent import RandomAgent
 
-        return RandomAgent()
+        return RandomAgent(seed=seed)
+    if spec == "greedy":
+        from .agents.greedy import GreedyAgent
+
+        return GreedyAgent(seed=seed)
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
 
@@ -46,16 +50,29 @@ def _load_agent(spec: str) -> Any:
     return obj() if callable(obj) else obj
 
 
+# Built-in agents selectable by name (besides path/subprocess specs).
+_BUILTIN_AGENTS = ("greedy", "human", "random")
+
+
 def cmd_list_games(_: argparse.Namespace) -> int:
     for name in sorted(_builtin_games().keys()):
         print(name)
     return 0
 
 
+def cmd_list_agents(_: argparse.Namespace) -> int:
+    for name in _BUILTIN_AGENTS:
+        print(name)
+    return 0
+
+
 def cmd_play(args: argparse.Namespace) -> int:
     game = _load_game(args.game)
-    a0 = _load_agent(args.p0)
-    a1 = _load_agent(args.p1)
+    # Give the two seats distinct seeds so two seeded random/greedy agents do
+    # not draw from the same sequence; the whole match stays reproducible.
+    seed = args.seed
+    a0 = _load_agent(args.p0, seed=seed)
+    a1 = _load_agent(args.p1, seed=(None if seed is None else seed + 1))
 
     log_path = Path(args.log).expanduser().resolve() if args.log else None
     try:
@@ -89,12 +106,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_list = sub.add_parser("list-games", help="List built-in games")
     p_list.set_defaults(func=cmd_list_games)
 
+    p_list_agents = sub.add_parser("list-agents", help="List built-in agents")
+    p_list_agents.set_defaults(func=cmd_list_agents)
+
     p_play = sub.add_parser("play", help="Play a match")
     p_play.add_argument("game", help="Built-in name (e.g. tictactoe) or '<path>:<symbol>'")
-    p_play.add_argument("--p0", default="human", help="Agent0: human|random|subprocess:<cmd>|<path>:<symbol>")
-    p_play.add_argument("--p1", default="random", help="Agent1: human|random|subprocess:<cmd>|<path>:<symbol>")
+    p_play.add_argument("--p0", default="human", help="Agent0: human|random|greedy|subprocess:<cmd>|<path>:<symbol>")
+    p_play.add_argument("--p1", default="random", help="Agent1: human|random|greedy|subprocess:<cmd>|<path>:<symbol>")
     p_play.add_argument("--prime-pause", action="store_true", help="Pause after prime-numbered turns")
     p_play.add_argument("--log", help="Write JSON match log to this path")
+    p_play.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed the built-in random/greedy agents for a reproducible match",
+    )
     p_play.set_defaults(func=cmd_play)
 
     p_gui = sub.add_parser("gui", help="Launch a Tkinter GUI to play/watch matches or replay logs")
@@ -103,8 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Built-in name or '<path>:<symbol>' (for live matches; for --load-log, omit to infer when possible)",
     )
-    p_gui.add_argument("--p0", default="human", help="Agent0: human|random|subprocess:<cmd>|<path>:<symbol>")
-    p_gui.add_argument("--p1", default="random", help="Agent1: human|random|subprocess:<cmd>|<path>:<symbol>")
+    p_gui.add_argument("--p0", default="human", help="Agent0: human|random|greedy|subprocess:<cmd>|<path>:<symbol>")
+    p_gui.add_argument("--p1", default="random", help="Agent1: human|random|greedy|subprocess:<cmd>|<path>:<symbol>")
     p_gui.add_argument("--load-log", help="Open a JSON match log for replay")
     p_gui.add_argument("--save-log", help="Write a JSON match log here when the live match ends")
     p_gui.add_argument("--max-turns", type=int, default=10_000, help="Hard cap on turns for live play")

@@ -46,10 +46,15 @@ Three design rules shape everything below:
 - `loading.py` — `load_symbol("<path>:<symbol>")`, the dynamic-import
   mechanism the CLI/tournament use to reach games and agents in model
   folders.
-- `agents/` — built-ins: `human` (stdin), `random`, and `SubprocessAgent`,
-  which speaks the JSONL protocol (`docs/protocol.md`) to a long-running bot
-  process with a per-turn timeout. The bot's stderr is drained on a
-  background thread (a chatty bot cannot deadlock the match by filling the
+- `agents/` — built-ins: `human` (stdin), `random`, `greedy`, and
+  `SubprocessAgent`. `greedy` is a game-agnostic baseline (in `greedy.py`) that
+  uses only the `Game` protocol — it grabs an immediate win, else avoids moves
+  that let the opponent win or that lose on the spot, else plays randomly;
+  shallow (1 ply each way) but a real skill floor above `random`. `random` and
+  `greedy` take an optional `seed` for reproducible play (`ai-arena play
+  --seed`). `SubprocessAgent` speaks the JSONL protocol (`docs/protocol.md`) to a
+  long-running bot process with a per-turn timeout. The bot's stderr is drained
+  on a background thread (a chatty bot cannot deadlock the match by filling the
   pipe buffer) and its tail is attached to the error when the bot dies.
 - `tournament.py` — round-robin from a TOML config (`arena.toml`). Each
   pairing plays three contexts: both competitors' home games plus the third
@@ -63,7 +68,7 @@ Three design rules shape everything below:
   are contained so one bug cannot lose a whole expensive run: an agent that
   fails to start forfeits its match (`agent_spawn_failed:...`), and a crash
   in game code voids the match (`match_error:...`, recorded but no points).
-- `cli.py` — `ai-arena list-games | play | gui | tournament`.
+- `cli.py` — `ai-arena list-games | list-agents | play | gui | tournament`.
 - `gui.py` — generic Tkinter board GUI for live matches and log replay.
 - `replay.py` — rebuilds the state sequence from a match log's move history;
   falls back to the engine's recorded result for forfeit endings that game

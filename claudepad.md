@@ -2,6 +2,34 @@
 
 ## Session Summaries
 
+### 2026-06-17 ~UTC — Add `greedy` baseline agent + reproducible seeding
+- New built-in `GreedyAgent` (`src/ai_arena/agents/greedy.py`): game-agnostic,
+  uses ONLY the Game protocol. Per turn: (1) grab an immediate win; (2) else
+  avoid moves that let the opponent win next ply OR that lose on the spot
+  (covers Caldera mutual-eruption / Photon self-laser); (3) else random.
+  Shuffles via a seeded RNG for uniform, reproducible tie-breaks. Shallow
+  (1 ply each way) by design — a real skill floor above `random`, not a solver.
+  `safety_budget` (default 12k) bounds the O(branching^2) defence scan on
+  high-branching external games; unverified candidates are "unknown", never
+  silently "safe". Never preferred-forfeits: swallows speculative game-call
+  exceptions, always returns an element of legal_moves.
+- `RandomAgent` is now seedable (`seed=None` keeps old nondeterministic
+  behaviour via `random.Random(None)`); both agents take `seed`.
+- CLI: new `list-agents`; `play --seed N` threads a seed to built-in
+  random/greedy agents (p0=seed, p1=seed+1) for a reproducible match. `greedy`
+  wired into all three loaders (cli/tournament/gui).
+- Wet-tested: greedy(p0) vs random = 181W/1L/18D over 200 tictactoe games;
+  full greedy-vs-random matches complete cleanly on Caldera (capture win),
+  Skysummit (reach-3 win), Photon (survives to max-turn draw); per-turn cost
+  1–74 ms; tournament with greedy integrates and scores correctly; same-seed
+  runs produce identical move sequences.
+- Tests: tests/test_greedy.py (win-grab, block, self-loss avoidance, legal-move
+  invariant over 200 positions, seed determinism, never-raises-on-bad-game,
+  cross-game generality on Caldera) + a cli drift guard. 97 → 109 tests.
+- Multi-agent review (line-by-line + caller-tracer + pitfalls/reuse): no
+  correctness bugs; fixed a docstring overclaim ("never raises" → scoped to the
+  engine's non-empty-legal contract) and added the list-agents drift test.
+
 ### 2026-06-11 ~00:30 UTC — Durable run artifacts (logs survive crashes)
 - Match logs are now incremental + atomic: `play_match` snapshots the log as
   moves apply (`reason: "in_progress"`, throttled ~1/s via

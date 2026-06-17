@@ -66,6 +66,10 @@ def _agent_factory(spec: str) -> Callable[[], Any]:
         from .agents.human import HumanAgent
 
         return HumanAgent
+    if spec == "greedy":
+        from .agents.greedy import GreedyAgent
+
+        return GreedyAgent
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
 

@@ -32,7 +32,13 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 
 ai-arena list-games
+ai-arena list-agents
 ai-arena play tictactoe --p0 human --p1 random
+
+# Built-in baselines: `random` and `greedy` (a game-agnostic 1-ply
+# win/loss-aware player). `--seed` makes a match with built-in agents reproducible.
+ai-arena play tictactoe --p0 greedy --p1 random --seed 1
+
 ai-arena tournament --config arena.toml
 
 # GUI (optional)
