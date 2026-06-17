@@ -2,6 +2,39 @@
 
 ## Session Summaries
 
+### 2026-06-17 ~UTC — Add `benchmark` command (head-to-head agent eval)
+- New `ai-arena benchmark <game> --p0 <a> --p1 <b> --games N [--seed S]
+  [--no-swap] [--out f] [--quiet]` (`src/ai_arena/benchmark.py`): plays N
+  independent matches between two agents and reports outcomes **by contestant**,
+  not by seat. Formalizes the manual benchmarking the claudepad was full of
+  ("search vs random = 0 losses over 100 games", etc.).
+- Seats alternate by default (`swap_starts`) so first-mover advantage cancels;
+  `--seed` gives every game distinct, reproducible seeds (game i seeds the two
+  seats `S+2i` / `S+2i+1`). Fresh agent per game (independent games; stateful
+  bots not replayed). Reports W/D counts + %, forfeit tally (timeout/
+  agent_error/illegal_move) split by contestant, a terminal-reason histogram
+  (shows *how* games end — crown_captured / reach_level3 / draw …), avg turns,
+  and per-contestant think-time (avg/max). `--out` writes JSON atomically.
+  `human` rejected (blocks on stdin).
+- Durability: each game runs under containment — Ctrl-C, a flaky subprocess
+  spawn failure, or a game-code crash stops the run but **keeps every completed
+  game** and returns `incomplete=True` (exit 130), never discarding an
+  expensive run wholesale. (This was the one finding from the high-effort
+  multi-agent review; the rest of the module verified clean — seat/forfeit/seed/
+  throttle/empty-stats/closure logic all correct.)
+- Self-contained spec resolver `_seeded_agent_factory` (reuses tournament's
+  `_game_factory`); the human/subprocess/path branches duplicate cli/tournament
+  by design — the seed-per-game signature `Callable[[int|None],Any]` differs
+  from both, and merging would mean refactoring tested code.
+- Wet-tested: search vs random = 0 losses (80W/20D) on tictactoe; search-v-search
+  = all draws; greedy beats random on Caldera (crown_captured) and Skysummit
+  (reach_level3); determinism reproduces; bad subprocess spec → warning + clean
+  partial summary + exit 130 (was an unhandled traceback).
+- Tests: tests/test_benchmark.py (15: outcome attribution, seat-swap balancing
+  via a FirstMoverWins game, forfeit attribution, seeded reproducibility,
+  partial-on-interrupt, partial-on-spawn-failure, summary formatting, CLI).
+  124 → 139 tests, suite ~3.8s.
+
 ### 2026-06-17 ~UTC — Add `search` baseline agent (depth-limited alpha-beta)
 - New built-in `SearchAgent` (`src/ai_arena/agents/search.py`): game-agnostic
   negamax with alpha-beta, using ONLY the Game protocol. Leaves scored by

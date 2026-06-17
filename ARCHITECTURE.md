@@ -74,7 +74,21 @@ Three design rules shape everything below:
   are contained so one bug cannot lose a whole expensive run: an agent that
   fails to start forfeits its match (`agent_spawn_failed:...`), and a crash
   in game code voids the match (`match_error:...`, recorded but no points).
-- `cli.py` — `ai-arena list-games | list-agents | play | gui | tournament`.
+- `benchmark.py` — `run_benchmark`: plays N independent matches between two
+  agents and reports outcomes *by contestant* (not by seat). Seats alternate
+  by default (`swap_starts`) so first-mover advantage cancels out, and a
+  `base_seed` gives every game distinct, reproducible seeds (game `i` seeds the
+  two seats `base_seed + 2i` / `+ 2i + 1`). It builds a fresh agent per game so
+  games are independent and stateful bots are not replayed; outcomes are
+  attributed to the named contestant regardless of which seat it took that
+  game. Reports win/draw counts, a forfeit tally (timeout / agent_error /
+  illegal_move) split by contestant, a terminal-reason histogram (so you can
+  see *how* games end — `crown_captured`, `reach_level3`, …), average turns,
+  and per-contestant think-time (avg/max). A `KeyboardInterrupt` returns the
+  partial result (`incomplete=True`) so a long run can be stopped without
+  losing what it found. `human` is rejected (it blocks on stdin).
+- `cli.py` — `ai-arena list-games | list-agents | play | benchmark | gui |
+  tournament`.
 - `gui.py` — generic Tkinter board GUI for live matches and log replay.
 - `replay.py` — rebuilds the state sequence from a match log's move history;
   falls back to the engine's recorded result for forfeit endings that game
@@ -116,9 +130,12 @@ The rules docs state the reduced caps and `tests/` pins them.
 ## Testing & CI
 
 - `tests/` — pytest suite for the engine, replay, subprocess agent,
-  tournament crash containment, GUI log-name inference, the built-in baseline
-  agents (`greedy`, `search` — tactics, optimal tic-tac-toe play, robustness),
-  and all three home games (move generation, rules edge cases, turn-limit pins).
+  tournament crash containment, the `benchmark` command (outcome attribution
+  by contestant, seat-swap balancing, forfeit attribution, seeded
+  reproducibility, partial-on-interrupt), GUI log-name inference, the built-in
+  baseline agents (`greedy`, `search` — tactics, optimal tic-tac-toe play,
+  robustness), and all three home games (move generation, rules edge cases,
+  turn-limit pins).
   `gemini/game/test_game.py` holds additional Photon tests that run from the
   repo root as well.
 - `.github/workflows/` — CI runs `pytest -q` on Python 3.12 for pushes to

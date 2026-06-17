@@ -42,6 +42,10 @@ ai-arena play tictactoe --p0 human --p1 random
 ai-arena play tictactoe --p0 greedy --p1 random --seed 1
 ai-arena play tictactoe --p0 search --p1 greedy --seed 1
 
+# Benchmark one agent against another over many games (seats alternate so
+# first-mover advantage cancels out) and report head-to-head win/draw rates.
+ai-arena benchmark tictactoe --p0 search --p1 random --games 100 --seed 1
+
 ai-arena tournament --config arena.toml
 
 # GUI (optional)
