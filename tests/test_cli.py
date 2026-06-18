@@ -208,3 +208,49 @@ def test_tournament_runs_config_and_writes_results(tmp_path: Path, capsys) -> No
     assert data["complete"] is True
     assert len(data["matches"]) == 3
     assert {m["context"] for m in data["matches"]} == {"home:a", "home:b", "neutral"}
+
+
+def test_standings_round_trips_a_tournament_results_file(tmp_path: Path, capsys) -> None:
+    # The durable results.json should be readable back into a leaderboard later
+    # (the headless reader for tournament artifacts, mirroring `replay`).
+    cfg = tmp_path / "arena.toml"
+    out = tmp_path / "results.json"
+    cfg.write_text(
+        'neutral_game = "tictactoe"\n'
+        "rounds = 1\n"
+        "swap_starts = true\n"
+        "\n"
+        "[[competitors]]\n"
+        'id = "a"\n'
+        'home_game = "tictactoe"\n'
+        'agent = "random"\n'
+        "\n"
+        "[[competitors]]\n"
+        'id = "b"\n'
+        'home_game = "tictactoe"\n'
+        'agent = "random"\n',
+        encoding="utf-8",
+    )
+    assert main(["tournament", "--config", str(cfg), "--out", str(out)]) == 0
+    capsys.readouterr()  # discard the tournament output
+
+    assert main(["standings", str(out), "--by-context", "--matches"]) == 0
+    text = capsys.readouterr().out
+    assert "standings (" in text
+    assert "head-to-head" in text
+    assert "home vs away" in text  # --by-context
+    assert "matches (" in text  # --matches
+    # Both competitors appear in the leaderboard.
+    assert "a" in text and "b" in text
+
+
+def test_standings_errors_cleanly_on_missing_file(tmp_path: Path, capsys) -> None:
+    assert main(["standings", str(tmp_path / "nope.json")]) == 1
+    assert "could not read results file" in capsys.readouterr().err
+
+
+def test_standings_rejects_non_object_json(tmp_path: Path, capsys) -> None:
+    bad = tmp_path / "arr.json"
+    bad.write_text("[1, 2, 3]", encoding="utf-8")
+    assert main(["standings", str(bad)]) == 1
+    assert "is not a JSON object" in capsys.readouterr().err

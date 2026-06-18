@@ -84,6 +84,15 @@ Three design rules shape everything below:
   are contained so one bug cannot lose a whole expensive run: an agent that
   fails to start forfeits its match (`agent_spawn_failed:...`), and a crash
   in game code voids the match (`match_error:...`, recorded but no points).
+  Also owns the `standings` report (`compute_standings` / `format_standings` /
+  `parse_match_summaries`, driven by `cmd_standings`): the headless, post-hoc
+  reader for a results file, mirroring what `replay` is for match logs. It
+  recomputes the leaderboard from the recorded `matches` using the same scoring
+  rule as the live run (`_apply_result`) — so it is self-consistent and works on
+  partial or older files (it tolerates a missing `complete`/`scoreboard`) — and
+  adds a head-to-head record, a per-competitor home/away split, and a
+  termination-reason histogram. A `match_error:` match is excluded from scoring
+  (a void is not a draw), matching the live tournament.
 - `benchmark.py` — `run_benchmark`: plays N independent matches between two
   agents and reports outcomes *by contestant* (not by seat). Seats alternate
   by default (`swap_starts`) so first-mover advantage cancels out, and a
@@ -98,7 +107,7 @@ Three design rules shape everything below:
   partial result (`incomplete=True`) so a long run can be stopped without
   losing what it found. `human` is rejected (it blocks on stdin).
 - `cli.py` — `ai-arena list-games | list-agents | play | replay | benchmark |
-  gui | tournament`. `replay` reads a durable match log back to the terminal
+  gui | tournament | standings`. `replay` reads a durable match log back to the terminal
   with no GUI/Tkinter dependency (summary + final board, optional `--moves`
   and per-frame `--frames`): it reconstructs and re-validates the match via
   `replay.py` when the game is loadable (inferred from the log, or `--game`),
@@ -147,7 +156,10 @@ The rules docs state the reduced caps and `tests/` pins them.
 ## Testing & CI
 
 - `tests/` — pytest suite for the engine, replay, subprocess agent,
-  tournament crash containment, the `benchmark` command (outcome attribution
+  tournament crash containment, the `standings` report (point scoring + ranking,
+  head-to-head, home/away split, void exclusion, defensive parsing, and an
+  invariant that the recomputed scoreboard matches the live tournament's), the
+  `benchmark` command (outcome attribution
   by contestant, seat-swap balancing, forfeit attribution, seeded
   reproducibility, partial-on-interrupt), the `replay` command (log round-trip
   and rendering, fallback to stored data when the game is unknown, explicit

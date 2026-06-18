@@ -12,7 +12,7 @@ from .engine import play_match
 from .games.tictactoe import TicTacToe
 from .loading import load_symbol
 from .replay import Replay, infer_game_spec_from_log, load_match_log, replay_from_log_payload
-from .tournament import load_tournament_parser
+from .tournament import load_standings_parser, load_tournament_parser
 
 
 def _builtin_games() -> dict[str, Any]:
@@ -287,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     load_benchmark_parser(sub)
     load_tournament_parser(sub)
+    load_standings_parser(sub)
 
     return p
 

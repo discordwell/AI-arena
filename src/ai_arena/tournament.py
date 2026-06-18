@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import sys
 import time
@@ -299,6 +300,235 @@ def run_tournament(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Standings report
+#
+# A tournament `results.json` is durable (rule 3), but until now it could only
+# be understood from the live stdout scoreboard at run time. These functions
+# read a results file back into a ranked leaderboard, a head-to-head record, a
+# home/away split, and a termination-reason histogram -- the post-hoc reader for
+# tournament artifacts, mirroring what `replay` does for match logs. The report
+# is derived from the recorded `matches` list using the same scoring rule as the
+# live run (`_apply_result`), so it is self-consistent and works on partial or
+# older files that predate the `complete`/`scoreboard` fields.
+# ---------------------------------------------------------------------------
+
+# A match is voided (no points awarded) only when game/harness code crashed; the
+# tournament records that as reason "match_error:...". Everything else is scored:
+# a real winner, a draw (winner None), or an agent-spawn forfeit (has a winner).
+_VOID_PREFIX = "match_error"
+
+
+def _is_void(reason: str) -> bool:
+    return reason.startswith(_VOID_PREFIX)
+
+
+@dataclass(frozen=True, slots=True)
+class StandingsRow:
+    cid: str
+    points: int
+    wins: int
+    losses: int
+    draws: int
+    played: int  # scored matches this competitor appeared in
+
+
+@dataclass(frozen=True, slots=True)
+class HeadToHead:
+    a: str  # the lexicographically smaller competitor id
+    b: str
+    a_wins: int
+    draws: int
+    b_wins: int
+
+
+@dataclass(frozen=True, slots=True)
+class StandingsReport:
+    rows: list[StandingsRow]  # ranked: most points first, ties broken by id
+    head_to_head: list[HeadToHead]  # one per pairing, sorted by (a, b)
+    context_splits: dict[str, dict[str, tuple[int, int, int]]]  # cid -> {"home"/"away": (w, d, l)}
+    reasons: dict[str, int]  # terminal reason -> count (scored matches only)
+    scored: int
+    voided: int
+
+
+def parse_match_summaries(payload: dict[str, Any]) -> list[MatchSummary]:
+    """
+    Pull the recorded matches out of a results payload, defensively.
+
+    A match with no usable contestant ids is skipped (it cannot be attributed);
+    other fields fall back to sensible defaults so a partial or hand-edited file
+    still summarizes instead of raising.
+    """
+    raw = payload.get("matches") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return []
+
+    out: list[MatchSummary] = []
+    for m in raw:
+        if not isinstance(m, dict):
+            continue
+        p0, p1 = m.get("p0"), m.get("p1")
+        if not isinstance(p0, str) or not isinstance(p1, str):
+            continue
+        # A winner must be one of the two contestants. Anything else -- None for a
+        # draw, or a corrupt/hand-edited value -- becomes "no winner", so the
+        # scorer (which only knows the two seat ids) cannot KeyError on it.
+        winner = m.get("winner")
+        turns = m.get("turns")
+        out.append(
+            MatchSummary(
+                context=str(m.get("context", "")),
+                game=str(m.get("game", "")),
+                p0=p0,
+                p1=p1,
+                winner=winner if winner in (p0, p1) else None,
+                reason=str(m.get("reason", "")),
+                turns=turns if isinstance(turns, int) else 0,
+            )
+        )
+    return out
+
+
+def compute_standings(matches: list[MatchSummary]) -> StandingsReport:
+    """Recompute the full standings report from a list of match summaries."""
+    ids = sorted({m.p0 for m in matches} | {m.p1 for m in matches})
+    sb = {cid: {"wins": 0, "losses": 0, "draws": 0, "points": 0} for cid in ids}
+    played = {cid: 0 for cid in ids}
+    # head-to-head keyed by the sorted pair; tallied from the smaller id's view.
+    h2h: dict[tuple[str, str], list[int]] = {}
+    # per-competitor home/away record as mutable [wins, draws, losses].
+    ctx: dict[str, dict[str, list[int]]] = {cid: {"home": [0, 0, 0], "away": [0, 0, 0]} for cid in ids}
+    reasons: dict[str, int] = {}
+    scored = voided = 0
+
+    for m in matches:
+        if _is_void(m.reason):
+            voided += 1
+            continue
+        scored += 1
+        reasons[m.reason] = reasons.get(m.reason, 0) + 1
+        _apply_result(sb, m.p0, m.p1, m.winner)
+        played[m.p0] += 1
+        played[m.p1] += 1
+
+        a, b = (m.p0, m.p1) if m.p0 <= m.p1 else (m.p1, m.p0)
+        rec = h2h.setdefault((a, b), [0, 0, 0])
+        if m.winner is None:
+            rec[1] += 1
+        elif m.winner == a:
+            rec[0] += 1
+        else:
+            rec[2] += 1
+
+        # "home:<cid>" marks <cid>'s own home game; every other context (a rival's
+        # away game, or the neutral game) counts as away for both contestants.
+        for cid in (m.p0, m.p1):
+            wdl = ctx[cid]["home" if m.context == f"home:{cid}" else "away"]
+            if m.winner is None:
+                wdl[1] += 1
+            elif m.winner == cid:
+                wdl[0] += 1
+            else:
+                wdl[2] += 1
+
+    rows = [
+        StandingsRow(cid, sb[cid]["points"], sb[cid]["wins"], sb[cid]["losses"], sb[cid]["draws"], played[cid])
+        for cid in ids
+    ]
+    rows.sort(key=lambda r: (-r.points, r.cid))
+
+    head_to_head = [HeadToHead(a, b, rec[0], rec[1], rec[2]) for (a, b), rec in sorted(h2h.items())]
+    context_splits = {
+        cid: {"home": tuple(ctx[cid]["home"]), "away": tuple(ctx[cid]["away"])} for cid in ids
+    }
+    return StandingsReport(
+        rows=rows,
+        head_to_head=head_to_head,
+        context_splits=context_splits,
+        reasons=reasons,
+        scored=scored,
+        voided=voided,
+    )
+
+
+def format_standings(
+    report: StandingsReport,
+    *,
+    complete: bool | None = None,
+    show_context: bool = False,
+    matches: list[MatchSummary] | None = None,
+) -> str:
+    """
+    Render a :class:`StandingsReport` as text.
+
+    ``complete`` (the results file's flag, if any) flags an interrupted run;
+    ``show_context`` adds each competitor's home/away split; passing ``matches``
+    appends the full match list (otherwise it is omitted).
+    """
+    total = report.scored + report.voided
+    header = f"standings ({report.scored} scored"
+    if report.voided:
+        header += f", {report.voided} voided"
+    header += f" / {total} matches)"
+    if complete is False:
+        header += "  [INCOMPLETE run]"
+    lines = [header]
+
+    if not report.rows:
+        lines.append("(no matches recorded)")
+        return "\n".join(lines)
+
+    # Leaderboard.
+    name_w = max(len("competitor"), max(len(r.cid) for r in report.rows))
+    lines.append("")
+    lines.append(f"  {'#':>2}  {'competitor':<{name_w}}  {'pts':>3}  {'W':>2} {'L':>2} {'D':>2}  {'played':>6}")
+    for i, r in enumerate(report.rows, 1):
+        lines.append(
+            f"  {i:>2}  {r.cid:<{name_w}}  {r.points:>3}  "
+            f"{r.wins:>2} {r.losses:>2} {r.draws:>2}  {r.played:>6}"
+        )
+
+    # Head-to-head.
+    if report.head_to_head:
+        pair_w = max(len(f"{h.a} vs {h.b}") for h in report.head_to_head)
+        lines.append("")
+        lines.append("head-to-head (W-D-L, first contestant's view):")
+        for h in report.head_to_head:
+            lines.append(f"  {f'{h.a} vs {h.b}':<{pair_w}}  {h.a_wins}-{h.draws}-{h.b_wins}")
+
+    # Home vs away split (optional).
+    if show_context:
+        lines.append("")
+        lines.append("home vs away (W-D-L):")
+        for r in report.rows:
+            home = report.context_splits[r.cid]["home"]
+            away = report.context_splits[r.cid]["away"]
+            lines.append(
+                f"  {r.cid:<{name_w}}  home {home[0]}-{home[1]}-{home[2]}   away {away[0]}-{away[1]}-{away[2]}"
+            )
+
+    # Termination reasons.
+    if report.reasons:
+        reason_w = max(len(k) for k in report.reasons)
+        lines.append("")
+        lines.append("how games ended:")
+        for reason, n in sorted(report.reasons.items(), key=lambda kv: (-kv[1], kv[0])):
+            lines.append(f"  {reason:<{reason_w}}  {n}")
+
+    # Full match list (optional).
+    if matches is not None:
+        lines.append("")
+        lines.append(f"matches ({len(matches)}):")
+        for i, m in enumerate(matches, 1):
+            outcome = m.winner if m.winner is not None else ("VOID" if _is_void(m.reason) else "draw")
+            lines.append(
+                f"  {i:>2}. [{m.context}] {m.p0} vs {m.p1}  ->  {outcome} ({m.reason}, {m.turns}t)"
+            )
+
+    return "\n".join(lines)
+
+
 def _load_config(path: Path) -> dict[str, Any]:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -362,4 +592,40 @@ def load_tournament_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--config", default="arena.toml", help="Path to config TOML")
     p.add_argument("--out", help="Write JSON results to this path")
     p.set_defaults(func=cmd_tournament)
+
+
+def cmd_standings(args: argparse.Namespace) -> int:
+    path = Path(args.results).expanduser().resolve()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:  # missing / unreadable / not JSON
+        print(f"error: could not read results file {path} ({type(e).__name__}: {e})", file=sys.stderr)
+        return 1
+    if not isinstance(payload, dict):
+        print(f"error: results file {path} is not a JSON object", file=sys.stderr)
+        return 1
+
+    matches = parse_match_summaries(payload)
+    report = compute_standings(matches)
+    complete = payload.get("complete")
+    print(
+        format_standings(
+            report,
+            complete=complete if isinstance(complete, bool) else None,
+            show_context=args.by_context,
+            matches=matches if args.matches else None,
+        )
+    )
+    return 0
+
+
+def load_standings_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "standings",
+        help="Summarize a tournament results JSON into a leaderboard + head-to-head (headless)",
+    )
+    p.add_argument("results", help="Path to a tournament results JSON (from `tournament --out`)")
+    p.add_argument("--by-context", action="store_true", help="Also show each competitor's home vs away record")
+    p.add_argument("--matches", action="store_true", help="List every recorded match")
+    p.set_defaults(func=cmd_standings)
 

@@ -48,7 +48,13 @@ ai-arena play codex/game/game.py:CodexGame --p0 mcts --p1 greedy --seed 1
 # first-mover advantage cancels out) and report head-to-head win/draw rates.
 ai-arena benchmark tictactoe --p0 search --p1 random --games 100 --seed 1
 
-ai-arena tournament --config arena.toml
+ai-arena tournament --config arena.toml --out results.json
+
+# Read a tournament results file back into a ranked leaderboard + head-to-head
+# record (headless; the post-hoc reader for tournament artifacts).
+ai-arena standings results.json
+ai-arena standings results.json --by-context   # also: each player's home/away record
+ai-arena standings results.json --matches      # also: list every recorded match
 
 # Replay a saved match log to the terminal (headless; no GUI/Tkinter needed).
 # The game is inferred from the log when possible (--game to override/supply it).

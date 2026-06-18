@@ -2,6 +2,42 @@
 
 ## Session Summaries
 
+### 2026-06-18 ~UTC — Add headless `ai-arena standings` command (read tournament results.json back)
+- New `ai-arena standings <results.json> [--by-context] [--matches]`
+  (`src/ai_arena/tournament.py`: `parse_match_summaries` / `compute_standings` /
+  `format_standings` pure functions + `cmd_standings` / `load_standings_parser`;
+  registered in `cli.py`). Closes the exact gap `replay` closed for match logs:
+  a tournament `results.json` is durable (rule 3) but could previously only be
+  understood from the live stdout scoreboard at run time — useless after the run
+  or on a headless box. This is the post-hoc reader for tournament artifacts.
+- Report: ranked leaderboard (pts/W/L/D/played), head-to-head (W-D-L per pairing,
+  tallied from the smaller id's view), termination-reason histogram; `--by-context`
+  adds each player's home/away record, `--matches` lists every match. Derived from
+  the recorded `matches` using the SAME scoring rule as the live run
+  (reuses `_apply_result`), so it's self-consistent and works on partial/older
+  files (tolerates a missing `complete`/`scoreboard`). A `match_error:` match is
+  voided (no points, NOT a draw), matching the live `outcome.scored` gate.
+- KEY VALIDATION: recomputing the checked-in `results.json` reproduces its stored
+  scoreboard exactly (gemini 13 / codex 8 / opus 4). The report also surfaces real
+  insight that was invisible before — gemini went 4-0-0 away but 0-1-1 at home;
+  opus went 0-0-2 at home. Pinned as an invariant test (recomputed == live
+  `res.scoreboard`).
+- Wet-tested: real results.json (default/--by-context/--matches), a fresh
+  `tournament --out` round-trip (complete=true), voided+incomplete file
+  (`[INCOMPLETE run]`, VOID row), missing file / non-object JSON / malformed JSON
+  → clean rc 1, empty matches → "(no matches recorded)".
+- Multi-agent code review found one real [RISK]: a corrupt/hand-edited `winner`
+  that is neither contestant would KeyError in the reused `_apply_result` (live
+  run is immune — it builds winner from seat ids). Fixed in the parser: coerce
+  `winner` to None unless it equals p0/p1 (regression-tested). Core scoring
+  invariant + h2h perspective + home/away + defensive parsing all verified clean.
+- Tests: tests/test_standings.py (10: scoring+ranking, head-to-head, home/away
+  split, void exclusion, defensive+bogus-winner parsing, incomplete/empty
+  formatting, section/optional-block gating, live-scoreboard invariant) +
+  tests/test_cli.py (+3: tournament→standings round-trip, missing-file + non-object
+  errors). 162 → 174 tests. Docs: README quick-start, ARCHITECTURE (cli + tournament
+  + testing sections).
+
 ### 2026-06-17 ~UTC — Add headless `ai-arena replay` command (read match logs without the GUI)
 - New `ai-arena replay <log> [--game <spec>] [--moves] [--frames]`
   (`src/ai_arena/cli.py`: `cmd_replay`, pure formatter `_format_replay`). Closes
