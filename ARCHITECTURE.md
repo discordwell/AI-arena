@@ -97,12 +97,19 @@ Three design rules shape everything below:
   and per-contestant think-time (avg/max). A `KeyboardInterrupt` returns the
   partial result (`incomplete=True`) so a long run can be stopped without
   losing what it found. `human` is rejected (it blocks on stdin).
-- `cli.py` — `ai-arena list-games | list-agents | play | benchmark | gui |
-  tournament`.
+- `cli.py` — `ai-arena list-games | list-agents | play | replay | benchmark |
+  gui | tournament`. `replay` reads a durable match log back to the terminal
+  with no GUI/Tkinter dependency (summary + final board, optional `--moves`
+  and per-frame `--frames`): it reconstructs and re-validates the match via
+  `replay.py` when the game is loadable (inferred from the log, or `--game`),
+  and otherwise falls back to the result/`final_render` stored in the log so a
+  log of a game absent from this repo still summarizes from JSON alone.
 - `gui.py` — generic Tkinter board GUI for live matches and log replay.
 - `replay.py` — rebuilds the state sequence from a match log's move history;
   falls back to the engine's recorded result for forfeit endings that game
-  rules alone cannot detect.
+  rules alone cannot detect. Also owns `infer_game_spec_from_log` (mapping a
+  log's stored `game` name back to a loadable spec), shared by the `replay`
+  command and the GUI so neither path needs to hardcode game locations twice.
 - `games/tictactoe.py` — built-in neutral game.
 
 ## Model Folders (`codex/`, `opus/`, `gemini/`)
@@ -142,7 +149,10 @@ The rules docs state the reduced caps and `tests/` pins them.
 - `tests/` — pytest suite for the engine, replay, subprocess agent,
   tournament crash containment, the `benchmark` command (outcome attribution
   by contestant, seat-swap balancing, forfeit attribution, seeded
-  reproducibility, partial-on-interrupt), GUI log-name inference, the built-in
+  reproducibility, partial-on-interrupt), the `replay` command (log round-trip
+  and rendering, fallback to stored data when the game is unknown, explicit
+  `--game`, clean error on a bad path) and the game-name inferrer it shares
+  with the GUI, the built-in
   baseline agents (`greedy`, `search`, `mcts` — tactics, strong/optimal
   tic-tac-toe play, legality/determinism/budget invariants, robustness on
   misbehaving games), and all three home games (move generation, rules edge

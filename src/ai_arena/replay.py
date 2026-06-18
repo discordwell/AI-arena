@@ -34,6 +34,38 @@ def load_match_log(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _repo_root() -> Path:
+    # .../src/ai_arena/replay.py -> repo root is 2 parents up.
+    return Path(__file__).resolve().parents[2]
+
+
+def infer_game_spec_from_log(payload: dict[str, Any]) -> str | None:
+    """
+    Map a match log's stored ``game`` name back to a loadable game spec.
+
+    Engine logs record ``game.name``; this resolves the built-in neutral game by
+    name and each competitor's home game to its ``<path>:<symbol>`` spec relative
+    to the repo root, so a saved log can be replayed without naming the game by
+    hand. Returns None for an unknown/absent name (the caller then needs an
+    explicit spec). ``tests/test_gui_infer.py`` pins these names against the real
+    game classes so a rename is caught.
+    """
+    result = payload.get("result") if isinstance(payload, dict) else None
+    name = payload.get("game") if isinstance(payload, dict) else None
+    if not name and isinstance(result, dict):
+        name = result.get("game")
+
+    if name == "tictactoe":
+        return "tictactoe"
+    if name == "skysummit":
+        return str(_repo_root() / "codex" / "game" / "game.py") + ":CodexGame"
+    if name == "caldera":
+        return str(_repo_root() / "opus" / "game" / "game.py") + ":OpusGame"
+    if name == "photon_laser_tactics":
+        return str(_repo_root() / "gemini" / "game" / "game.py") + ":GeminiGame"
+    return None
+
+
 def replay_from_move_history(game: Game, move_history: list[dict[str, Any]]) -> Replay:
     moves: list[ReplayMove] = []
     for r in move_history:

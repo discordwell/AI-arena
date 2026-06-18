@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,7 @@ from .benchmark import load_benchmark_parser
 from .engine import play_match
 from .games.tictactoe import TicTacToe
 from .loading import load_symbol
+from .replay import Replay, infer_game_spec_from_log, load_match_log, replay_from_log_payload
 from .tournament import load_tournament_parser
 
 
@@ -108,6 +111,127 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return launch_gui(args)
 
 
+def _compact(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True, default=repr)
+
+
+def _format_replay(
+    payload: dict[str, Any],
+    rep: Replay | None,
+    game: Any,
+    *,
+    show_moves: bool,
+    show_frames: bool,
+) -> str:
+    """
+    Render a match-log replay as text.
+
+    When ``rep``/``game`` are present the summary is the *replayed* outcome
+    (states reconstructed from the move history and re-checked against the game
+    rules, falling back to the engine-recorded result for forfeit endings); when
+    the game could not be loaded it falls back to the result stored in the log,
+    so a log of a game not present in this repo still summarizes from JSON alone.
+    """
+    result = payload.get("result") if isinstance(payload, dict) else None
+    result = result if isinstance(result, dict) else {}
+
+    # rep and game are set/cleared together in cmd_replay, so one flag governs
+    # whether we report the reconstructed-and-revalidated replay or fall back to
+    # the result stored in the log.
+    replayed = rep is not None and game is not None
+
+    if replayed:
+        game_name = rep.game
+        winner = rep.terminal.winner
+        reason = rep.terminal.reason
+        turns = sum(1 for m in rep.moves if m.note is None)
+        source = "replayed"
+    else:
+        game_name = str(payload.get("game") or result.get("game") or "unknown")
+        winner = result.get("winner")
+        reason = str(result.get("reason", ""))
+        turns = result.get("turns")
+        if not isinstance(turns, int):
+            history = result.get("move_history", [])
+            turns = sum(1 for m in history if isinstance(m, dict) and m.get("note") is None)
+        source = "from log"
+
+    lines = [
+        f"game: {game_name} ({source})",
+        f"winner: {winner}",
+        f"reason: {reason}",
+        f"turns: {turns}",
+    ]
+
+    if show_moves:
+        history = result.get("move_history", [])
+        lines.append(f"moves: {len(history)}")
+        for m in history:
+            if not isinstance(m, dict):
+                continue
+            ms = m.get("ms")
+            ms_str = f"  {float(ms):.0f}ms" if isinstance(ms, (int, float)) else ""
+            note = m.get("note")
+            suffix = f"  [{note}]" if note else ""
+            lines.append(f"  [{m.get('turn')}] p{m.get('player')}: {_compact(m.get('move'))}{ms_str}{suffix}")
+
+    if show_frames:
+        if not replayed:
+            lines.append("(frames unavailable: could not load the game; pass --game <spec>)")
+        else:
+            for i, st in enumerate(rep.states):
+                lines.append(f"--- frame {i} ---")
+                lines.append(game.render(st))
+
+    if replayed:
+        lines.append("final board:")
+        lines.append(game.render(rep.states[-1]))
+    else:
+        final_render = payload.get("final_render") if isinstance(payload, dict) else None
+        if isinstance(final_render, str) and final_render:
+            lines.append("final board:")
+            lines.append(final_render)
+
+    return "\n".join(lines)
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    path = Path(args.log).expanduser().resolve()
+    try:
+        payload = load_match_log(path)
+    except (OSError, ValueError) as e:  # missing file / unreadable / not JSON
+        print(f"error: could not read match log {path} ({type(e).__name__}: {e})", file=sys.stderr)
+        return 1
+    if not isinstance(payload, dict):
+        print(f"error: match log {path} is not a JSON object", file=sys.stderr)
+        return 1
+
+    spec = args.game or infer_game_spec_from_log(payload)
+    game: Any = None
+    rep: Replay | None = None
+    if spec:
+        try:
+            game = _load_game(spec)
+            rep = replay_from_log_payload(game, payload)
+        except Exception as e:
+            print(
+                f"warning: could not replay with game spec {spec!r} "
+                f"({type(e).__name__}: {e}); showing stored log data only",
+                file=sys.stderr,
+            )
+            game = None
+            rep = None
+    else:
+        print(
+            "warning: could not infer the game for this log; showing stored log data only "
+            "(pass --game <spec> for a full, validated replay)",
+            file=sys.stderr,
+        )
+
+    print(_format_replay(payload, rep, game, show_moves=args.moves, show_frames=args.frames))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ai-arena")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -145,6 +269,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_gui.add_argument("--max-turns", type=int, default=10_000, help="Hard cap on turns for live play")
     p_gui.add_argument("--auto-delay-ms", type=int, default=250, help="Autoplay delay in milliseconds")
     p_gui.set_defaults(func=cmd_gui)
+
+    p_replay = sub.add_parser("replay", help="Replay a match log to the terminal (headless; no GUI required)")
+    p_replay.add_argument("log", help="Path to a JSON match log")
+    p_replay.add_argument(
+        "--game",
+        default=None,
+        help="Built-in name or '<path>:<symbol>' (omit to infer from the log when possible)",
+    )
+    p_replay.add_argument("--moves", action="store_true", help="List the move history")
+    p_replay.add_argument(
+        "--frames",
+        action="store_true",
+        help="Render the board at every frame (needs a loadable game)",
+    )
+    p_replay.set_defaults(func=cmd_replay)
 
     load_benchmark_parser(sub)
     load_tournament_parser(sub)

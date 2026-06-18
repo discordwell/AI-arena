@@ -50,6 +50,13 @@ ai-arena benchmark tictactoe --p0 search --p1 random --games 100 --seed 1
 
 ai-arena tournament --config arena.toml
 
+# Replay a saved match log to the terminal (headless; no GUI/Tkinter needed).
+# The game is inferred from the log when possible (--game to override/supply it).
+ai-arena play tictactoe --p0 search --p1 random --seed 7 --log /tmp/m.json
+ai-arena replay /tmp/m.json            # summary + final board
+ai-arena replay /tmp/m.json --moves    # also list the move history
+ai-arena replay /tmp/m.json --frames   # render the board at every turn
+
 # GUI (optional)
 ai-arena gui --game codex/game/game.py:CodexGame --p0 human --p1 random
 ai-arena gui --load-log /abs/path/to/match_log.json

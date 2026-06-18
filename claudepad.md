@@ -2,6 +2,38 @@
 
 ## Session Summaries
 
+### 2026-06-17 ~UTC — Add headless `ai-arena replay` command (read match logs without the GUI)
+- New `ai-arena replay <log> [--game <spec>] [--moves] [--frames]`
+  (`src/ai_arena/cli.py`: `cmd_replay`, pure formatter `_format_replay`). Closes
+  a real gap: the durable, crash-safe match logs (rule 3) could previously only
+  be read back through the Tkinter GUI (`gui --load-log`) — useless on a
+  headless tournament box. The whole point of the durability work is logs you
+  can read later; this is the headless reader.
+- Behavior: when the game is loadable (inferred from the log's `game` name, or
+  `--game`), it reconstructs + re-validates the match via the tested `replay.py`
+  and prints `game (replayed)`, winner/reason/turns, and the final board;
+  `--moves` lists move history, `--frames` renders every frame. When the game is
+  NOT loadable (unknown name / game absent from this repo) it falls back to the
+  result + `final_render` stored in the log, so it still summarizes from JSON
+  alone — just degraded (a stderr warning; `--frames` reports unavailable).
+  Clean exit 1 (not a traceback) on a missing/unreadable/non-JSON log.
+- Refactor: moved `_repo_root` + `_infer_game_spec_from_log` out of `gui.py`
+  (Tkinter-only) into `replay.py` as public `infer_game_spec_from_log`; `gui.py`
+  re-exports it under the old private name (so `test_gui_infer.py` is unchanged).
+  Side benefit: the moved version guards `result` not being a dict, fixing a
+  latent `AttributeError` the old `payload.get("result", {}).get(...)` had.
+- Wet-tested: tictactoe (replayed + moves + frames), Caldera inferred from log
+  name, winner=0 / turns=0 print correctly (no falsy-zero bug), unknown-game
+  fallback prints stored render + warns, missing file → rc 1.
+- Tests: tests/test_cli.py (+5: round-trip+render, moves/frames count, unknown-
+  game fallback, explicit `--game`, missing-file error) and tests/test_replay.py
+  (+1: canonical inferrer incl. malformed-payload robustness). 156 → 162 tests.
+- Multi-agent code review (correctness + removed-behavior + reuse/conventions):
+  no correctness bugs; behavior of the moved inferrer exactly preserved; applied
+  one simplification (bind the `replayed` flag once instead of repeating the
+  `rep/game is not None` test 3×). Docs: README quick-start, ARCHITECTURE (cli +
+  replay.py ownership + testing section).
+
 ### 2026-06-17 ~UTC — Add `mcts` baseline agent (Monte Carlo Tree Search)
 - New built-in `MctsAgent` (`src/ai_arena/agents/mcts.py`): game-agnostic UCT
   MCTS using ONLY the Game protocol — selection (negamax UCT), expansion, a

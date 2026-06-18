@@ -11,7 +11,11 @@ from .engine import atomic_write_json
 from .game import Game, PlayerId, Terminal
 from .json_types import JSONValue
 from .loading import load_symbol
-from .replay import load_match_log, replay_from_log_payload
+from .replay import (
+    infer_game_spec_from_log as _infer_game_spec_from_log,
+    load_match_log,
+    replay_from_log_payload,
+)
 
 
 class GUIHumanAgent:
@@ -68,27 +72,6 @@ def _maybe_close(agent: Any) -> None:
     close = getattr(agent, "close", None)
     if callable(close):
         close()
-
-
-def _repo_root() -> Path:
-    # .../src/ai_arena/gui.py -> repo root is 2 parents up.
-    return Path(__file__).resolve().parents[2]
-
-
-def _infer_game_spec_from_log(payload: dict[str, Any]) -> str | None:
-    name = payload.get("game") or payload.get("result", {}).get("game")
-    if name == "tictactoe":
-        return "tictactoe"
-    if name == "skysummit":
-        root = _repo_root()
-        return str(root / "codex" / "game" / "game.py") + ":CodexGame"
-    if name == "caldera":
-        root = _repo_root()
-        return str(root / "opus" / "game" / "game.py") + ":OpusGame"
-    if name == "photon_laser_tactics":
-        root = _repo_root()
-        return str(root / "gemini" / "game" / "game.py") + ":GeminiGame"
-    return None
 
 
 @dataclass(slots=True)

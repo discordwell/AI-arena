@@ -1,7 +1,28 @@
 from __future__ import annotations
 
 from ai_arena.games.tictactoe import TicTacToe
-from ai_arena.replay import replay_from_log_payload, replay_from_move_history
+from ai_arena.loading import load_symbol
+from ai_arena.replay import (
+    infer_game_spec_from_log,
+    replay_from_log_payload,
+    replay_from_move_history,
+)
+
+
+def test_infer_game_spec_resolves_known_names_and_ignores_unknown() -> None:
+    # Canonical home of the inferrer (gui re-exports it). Each known name must
+    # load to a game whose .name matches, so a rename can't silently break it.
+    assert infer_game_spec_from_log({"game": "tictactoe"}) == "tictactoe"
+    assert infer_game_spec_from_log({"result": {"game": "tictactoe"}}) == "tictactoe"
+    for name in ("skysummit", "caldera", "photon_laser_tactics"):
+        spec = infer_game_spec_from_log({"game": name})
+        assert spec is not None
+        assert load_symbol(spec)().name == name
+
+    # Unknown / malformed payloads yield None rather than raising.
+    assert infer_game_spec_from_log({"game": "no_such_game"}) is None
+    assert infer_game_spec_from_log({}) is None
+    assert infer_game_spec_from_log({"result": "not-a-dict"}) is None
 
 
 def test_replay_reconstructs_states_and_terminal() -> None:
