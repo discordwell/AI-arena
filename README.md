@@ -48,6 +48,11 @@ ai-arena play codex/game/game.py:CodexGame --p0 mcts --p1 greedy --seed 1
 # first-mover advantage cancels out) and report head-to-head win/draw rates.
 ai-arena benchmark tictactoe --p0 search --p1 random --games 100 --seed 1
 
+# Round-robin: rank two or more agents on one game into a leaderboard (every
+# pairing plays a seat-balanced benchmark; win 3 / draw 1 / loss 0, like the
+# tournament). The N-way generalization of `benchmark`.
+ai-arena round-robin tictactoe --agents random greedy search mcts --games 20 --seed 1
+
 ai-arena tournament --config arena.toml --out results.json
 
 # Read a tournament results file back into a ranked leaderboard + head-to-head

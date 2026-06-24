@@ -2,6 +2,46 @@
 
 ## Session Summaries
 
+### 2026-06-23 ~UTC — Add `ai-arena round-robin` command (N-way agent leaderboard on one game)
+- New `ai-arena round-robin <game> --agents SPEC [SPEC ...] [--games N] [--seed S]
+  [--no-swap] [--out f] [--quiet]` (`src/ai_arena/benchmark.py`:
+  `compute_round_robin_standings` / `run_round_robin` / `format_round_robin` pure-ish
+  functions + `cmd_round_robin` / `load_round_robin_parser`; registered in `cli.py`).
+  The N-way generalization of `benchmark`: it plays a full `run_benchmark` for every
+  unordered pairing and aggregates the games into a points leaderboard
+  (win 3 / draw 1 / loss 0 — the SAME rule as the tournament's `_apply_result`) plus a
+  per-pairing head-to-head. Closes the gap between `benchmark` (exactly 2 agents) and
+  `tournament` (fixed config-driven 3-way PvPvP across several games): neither could
+  "rank these N agents on this one game."
+- Built entirely on the tested `run_benchmark`, so each pairing inherits seat-swap
+  balancing + per-game seeding + crash containment. Each pairing gets a DISJOINT seed
+  window (pairing k starts at `base_seed + k*2*games`; run_benchmark uses
+  `base+2i`/`+2i+1` per game, so windows of width 2*games never overlap) → independent
+  pairings, fully reproducible round-robin. Incomplete pairing (Ctrl-C / spawn-fail /
+  game crash) keeps its completed games, marks the run incomplete, stops scheduling
+  further pairings, exit 130 (mirrors benchmark). Distinct specs required; `human`
+  rejected (blocks on stdin). `--out` writes JSON atomically (asdict over nested
+  BenchmarkResults + computed standings).
+- Wet-tested: 4 baselines on tictactoe (mcts==search top @68pts both never-lose,
+  greedy mid, random last; search-vs-mcts 12/12 draws); real Caldera game
+  (greedy>search>random); reproducible (same seed → identical); `--out` JSON round-trip,
+  no leftover .tmp; path-spec + forfeiting agent (12 forfeits, ranked last, forfeit
+  section renders) + `--no-swap`; bad path agent fails fast at spec-resolution (like
+  benchmark); CLI exit-130 end-to-end (flaky agent fails mid-pairing → INTERRUPTED
+  header + per-pairing [INTERRUPTED] + 2 completed games kept + rc 130).
+- Code review (adversarial subagent): NO correctness bugs. Confirmed seed-window
+  disjointness, points/record aggregation (A's win == B's loss, draws on both,
+  points==3*wins+draws even on partial pairings), crash-containment halt, all guards.
+  3 nits, all intentional convention-matches (factory-resolve order mirrors
+  cmd_benchmark; W-D-L columns match the dominant codebase convention; defensive
+  label guard is API-path defense-in-depth).
+- Tests: tests/test_round_robin.py (18: pure scoring+records+tie-break+forfeits+
+  unknown-label-skip, integration ranking on tictactoe, reproducibility, per-pairing
+  disjoint-seed-window proof vs standalone benchmark, <2-agents/duplicate/zero-games
+  guards, keep-completed-on-mid-run-failure, formatting incl. incomplete flag, 5 CLI).
+  174 → 192 tests, suite ~8s → ~9.3s. Docs: README quick-start, ARCHITECTURE
+  (benchmark.py + cli command list + testing sections).
+
 ### 2026-06-18 ~UTC — Add headless `ai-arena standings` command (read tournament results.json back)
 - New `ai-arena standings <results.json> [--by-context] [--matches]`
   (`src/ai_arena/tournament.py`: `parse_match_summaries` / `compute_standings` /

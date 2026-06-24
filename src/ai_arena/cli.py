@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .benchmark import load_benchmark_parser
+from .benchmark import load_benchmark_parser, load_round_robin_parser
 from .engine import play_match
 from .games.tictactoe import TicTacToe
 from .loading import load_symbol
@@ -286,6 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_replay.set_defaults(func=cmd_replay)
 
     load_benchmark_parser(sub)
+    load_round_robin_parser(sub)
     load_tournament_parser(sub)
     load_standings_parser(sub)
 

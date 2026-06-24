@@ -106,8 +106,20 @@ Three design rules shape everything below:
   and per-contestant think-time (avg/max). A `KeyboardInterrupt` returns the
   partial result (`incomplete=True`) so a long run can be stopped without
   losing what it found. `human` is rejected (it blocks on stdin).
+  Also owns `round-robin` (`run_round_robin` / `compute_round_robin_standings` /
+  `format_round_robin`, driven by `cmd_round_robin`): the N-way generalization of
+  `benchmark`. It plays a full `run_benchmark` for every unordered pairing of two
+  or more agents on one game and aggregates the games into a points leaderboard
+  (win 3 / draw 1 / loss 0 — the same rule as the tournament) plus a per-pairing
+  head-to-head record. Each pairing inherits `run_benchmark`'s seat-swap
+  balancing and per-game seeding, and gets a disjoint seed window (pairing `k`
+  starts at `base_seed + k·2·games`) so pairings are independent yet the whole
+  round-robin replays identically. Crash containment is inherited too: a pairing
+  interrupted or failed mid-run keeps its completed games, marks the round-robin
+  `incomplete`, and stops scheduling further pairings (exit 130, like
+  `benchmark`). Agent specs must be distinct, and `human` is rejected.
 - `cli.py` — `ai-arena list-games | list-agents | play | replay | benchmark |
-  gui | tournament | standings`. `replay` reads a durable match log back to the terminal
+  round-robin | gui | tournament | standings`. `replay` reads a durable match log back to the terminal
   with no GUI/Tkinter dependency (summary + final board, optional `--moves`
   and per-frame `--frames`): it reconstructs and re-validates the match via
   `replay.py` when the game is loadable (inferred from the log, or `--game`),
@@ -161,7 +173,10 @@ The rules docs state the reduced caps and `tests/` pins them.
   invariant that the recomputed scoreboard matches the live tournament's), the
   `benchmark` command (outcome attribution
   by contestant, seat-swap balancing, forfeit attribution, seeded
-  reproducibility, partial-on-interrupt), the `replay` command (log round-trip
+  reproducibility, partial-on-interrupt), the `round-robin` command (points/record
+  aggregation and ranking, label tie-break, forfeit attribution, per-pairing
+  disjoint seed windows, distinct-agent + positive-games guards, and keep-completed
+  on a mid-run pairing failure), the `replay` command (log round-trip
   and rendering, fallback to stored data when the game is unknown, explicit
   `--game`, clean error on a bad path) and the game-name inferrer it shares
   with the GUI, the built-in

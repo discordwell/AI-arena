@@ -98,6 +98,29 @@ class BenchmarkResult:
     incomplete: bool = False  # True if a KeyboardInterrupt stopped the run early
 
 
+@dataclass(frozen=True, slots=True)
+class RoundRobinRow:
+    """One agent's aggregate record across every pairing it played."""
+
+    agent: str
+    points: int  # win 3 / draw 1 / loss 0, summed over all of this agent's games
+    wins: int
+    draws: int
+    losses: int
+    forfeits: int  # games this agent lost via timeout / agent_error / illegal_move
+    played: int  # games this agent actually completed across all its pairings
+
+
+@dataclass(frozen=True, slots=True)
+class RoundRobinResult:
+    game: str
+    agents: list[str]  # the agent labels, in the order supplied
+    games_per_pair: int  # games requested per pairing
+    standings: list[RoundRobinRow]  # ranked: most points first, ties broken by label
+    pairs: list[BenchmarkResult]  # one per pairing actually run, in schedule order
+    incomplete: bool = False  # True if a pairing was interrupted or failed mid-run
+
+
 def _maybe_close(agent: Any) -> None:
     close = getattr(agent, "close", None)
     if callable(close):
@@ -348,3 +371,269 @@ def load_benchmark_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--out", help="Write JSON results to this path")
     p.add_argument("--quiet", action="store_true", help="Suppress per-game progress; print only the final summary")
     p.set_defaults(func=cmd_benchmark)
+
+
+# ---------------------------------------------------------------------------
+# Round-robin
+#
+# `benchmark` ranks exactly two agents; `tournament` runs the fixed, config-driven
+# three-competitor PvPvP across several games. Neither answers the everyday
+# question "rank these N agents against each other on this one game" -- the
+# natural N-way generalization of `benchmark`. `round-robin` does that: it plays a
+# seeded, seat-balanced `benchmark` for every unordered pairing and aggregates the
+# games into a points leaderboard (win 3 / draw 1 / loss 0, the same scoring rule
+# as the tournament), plus a head-to-head record. It is built entirely on the
+# tested `run_benchmark`, so every pairing inherits its seat-swap balancing,
+# per-game seeding, and crash containment.
+# ---------------------------------------------------------------------------
+
+
+def compute_round_robin_standings(agents: list[str], pairs: list[BenchmarkResult]) -> list[RoundRobinRow]:
+    """
+    Aggregate per-pairing :class:`BenchmarkResult` records into a ranked
+    leaderboard, one row per agent, using the tournament's win-3/draw-1/loss-0
+    scoring. Rows are ordered by points (descending), ties broken by label.
+
+    A pairing whose labels are not both in ``agents`` is ignored defensively, so
+    a hand-built or partial result still summarizes instead of raising.
+    """
+    tally = {a: {"points": 0, "wins": 0, "draws": 0, "losses": 0, "forfeits": 0, "played": 0} for a in agents}
+    for res in pairs:
+        # Each pairing contributes to both of its contestants: A's wins are B's
+        # losses (and vice versa); the shared draw count lands on both.
+        for label, wins, losses, forfeits in (
+            (res.a_label, res.a_wins, res.b_wins, res.a_forfeits),
+            (res.b_label, res.b_wins, res.a_wins, res.b_forfeits),
+        ):
+            t = tally.get(label)
+            if t is None:
+                continue
+            t["wins"] += wins
+            t["losses"] += losses
+            t["draws"] += res.draws
+            t["forfeits"] += forfeits
+            t["played"] += res.games
+            t["points"] += 3 * wins + res.draws
+
+    rows = [
+        RoundRobinRow(
+            a,
+            tally[a]["points"],
+            tally[a]["wins"],
+            tally[a]["draws"],
+            tally[a]["losses"],
+            tally[a]["forfeits"],
+            tally[a]["played"],
+        )
+        for a in agents
+    ]
+    rows.sort(key=lambda r: (-r.points, r.agent))
+    return rows
+
+
+def run_round_robin(
+    *,
+    game_factory: Callable[[], Any],
+    agents: list[tuple[str, SeededAgentFactory]],
+    games: int,
+    swap_starts: bool = True,
+    base_seed: int | None = None,
+    max_turns: int = 10_000,
+    on_pair: Callable[[int, int, BenchmarkResult], None] | None = None,
+) -> RoundRobinResult:
+    """
+    Play a head-to-head ``benchmark`` for every unordered pairing of ``agents``
+    (a list of ``(label, factory)``) on the game built by ``game_factory``, and
+    aggregate the results into a ranked leaderboard.
+
+    Each pairing is a full :func:`run_benchmark` run, so it inherits seat-swap
+    balancing and per-game seeding. With ``base_seed`` set, every pairing gets a
+    disjoint window of per-game seeds (pairing ``k`` starts at ``base_seed + k *
+    2 * games``), so pairings are independent yet the whole round-robin replays
+    identically.
+
+    Crash containment matches ``benchmark``: a pairing that is interrupted
+    (Ctrl-C) or fails mid-run returns the partial games it completed with
+    ``incomplete=True``; the round-robin then keeps that pairing's completed
+    games, stops scheduling further pairings, and is itself marked incomplete.
+    """
+    if len(agents) < 2:
+        raise ValueError("round-robin needs at least two agents")
+    if games <= 0:
+        raise ValueError("games must be a positive integer")
+    labels = [label for label, _ in agents]
+    if len(set(labels)) != len(labels):
+        raise ValueError("round-robin agents must be distinct (got a duplicate label)")
+
+    # Build the game once up front: surfaces a broken game spec immediately and
+    # gives the result a stable name even if zero pairings complete.
+    game_name = str(getattr(game_factory(), "name", "game"))
+
+    pair_indices = [(i, j) for i in range(len(agents)) for j in range(i + 1, len(agents))]
+    pairs: list[BenchmarkResult] = []
+    incomplete = False
+    for k, (i, j) in enumerate(pair_indices):
+        a_label, a_factory = agents[i]
+        b_label, b_factory = agents[j]
+        pair_seed = None if base_seed is None else base_seed + k * 2 * games
+        res = run_benchmark(
+            game_factory=game_factory,
+            a_factory=a_factory,
+            b_factory=b_factory,
+            a_label=a_label,
+            b_label=b_label,
+            games=games,
+            swap_starts=swap_starts,
+            base_seed=pair_seed,
+            max_turns=max_turns,
+        )
+        pairs.append(res)
+        if on_pair is not None:
+            on_pair(k, len(pair_indices), res)
+        if res.incomplete:
+            incomplete = True
+            break
+
+    return RoundRobinResult(
+        game=game_name,
+        agents=labels,
+        games_per_pair=games,
+        standings=compute_round_robin_standings(labels, pairs),
+        pairs=pairs,
+        incomplete=incomplete,
+    )
+
+
+def format_round_robin(r: RoundRobinResult) -> str:
+    rows = r.standings
+    status = "INTERRUPTED" if r.incomplete else "completed"
+    total_pairs = len(r.agents) * (len(r.agents) - 1) // 2
+
+    lines = [
+        f"game: {r.game}",
+        f"round-robin: {len(r.agents)} agents, {len(r.pairs)}/{total_pairs} pairings"
+        f" x {r.games_per_pair} games ({status})",
+    ]
+
+    if not rows:
+        lines.append("(no agents)")
+        return "\n".join(lines)
+
+    # Leaderboard.
+    name_w = max(len("agent"), max(len(row.agent) for row in rows))
+    lines.append("")
+    lines.append(f"  {'#':>2}  {'agent':<{name_w}}  {'pts':>4}  {'W':>3} {'D':>3} {'L':>3}  {'played':>6}")
+    for i, row in enumerate(rows, 1):
+        lines.append(
+            f"  {i:>2}  {row.agent:<{name_w}}  {row.points:>4}  "
+            f"{row.wins:>3} {row.draws:>3} {row.losses:>3}  {row.played:>6}"
+        )
+
+    # Forfeits (only when some agent lost a game by failing, not by the rules).
+    if any(row.forfeits for row in rows):
+        lines.append("")
+        lines.append("forfeits (games lost to timeout/agent_error/illegal_move):")
+        for row in rows:
+            if row.forfeits:
+                lines.append(f"  {row.agent:<{name_w}}  {row.forfeits}")
+
+    # Head-to-head, one line per pairing in schedule order.
+    if r.pairs:
+        pair_w = max(len(f"{res.a_label} vs {res.b_label}") for res in r.pairs)
+        lines.append("")
+        lines.append("head-to-head (W-D-L, first agent's view):")
+        for res in r.pairs:
+            note = "  [INTERRUPTED]" if res.incomplete else ""
+            lines.append(
+                f"  {f'{res.a_label} vs {res.b_label}':<{pair_w}}  "
+                f"{res.a_wins}-{res.draws}-{res.b_wins}{note}"
+            )
+
+    return "\n".join(lines)
+
+
+def cmd_round_robin(args: argparse.Namespace) -> int:
+    game_factory = _game_factory(args.game)
+
+    specs: list[str] = list(args.agents)
+    if len(specs) < 2:
+        raise ValueError("round-robin needs at least two agents (pass two or more to --agents)")
+    seen: set[str] = set()
+    for s in specs:
+        if s in seen:
+            raise ValueError(f"round-robin agents must be distinct; '{s}' appears more than once")
+        seen.add(s)
+    # Resolve every spec up front so a bad one (or 'human') fails fast, before any
+    # (potentially expensive) pairing runs.
+    agents = [(spec, _seeded_agent_factory(spec)) for spec in specs]
+
+    games = int(args.games)
+    if games <= 0:
+        raise ValueError("--games must be a positive integer")
+
+    quiet = bool(args.quiet)
+
+    def on_pair(done: int, total: int, res: BenchmarkResult) -> None:
+        if quiet:
+            return
+        note = " INTERRUPTED" if res.incomplete else ""
+        print(
+            f"  [{done + 1}/{total}] {res.a_label} vs {res.b_label}: "
+            f"{res.a_wins}-{res.draws}-{res.b_wins} (W-D-L){note}",
+            flush=True,
+        )
+
+    result = run_round_robin(
+        game_factory=game_factory,
+        agents=agents,
+        games=games,
+        swap_starts=not args.no_swap,
+        base_seed=args.seed,
+        max_turns=int(args.max_turns),
+        on_pair=on_pair,
+    )
+
+    print(format_round_robin(result))
+
+    if args.out:
+        out_path = Path(args.out).expanduser().resolve()
+        try:
+            atomic_write_json(out_path, asdict(result))
+            print(f"out: {out_path}")
+        except Exception as e:  # best-effort: the leaderboard is already on stdout
+            print(f"warning: failed to write results to {out_path} ({type(e).__name__}: {e})", file=sys.stderr)
+
+    # 130 = interrupted (128 + SIGINT), matching benchmark, so callers can tell a
+    # partial round-robin from a complete one.
+    return 130 if result.incomplete else 0
+
+
+def load_round_robin_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "round-robin",
+        help="Round-robin two or more agents on one game and rank them into a leaderboard",
+    )
+    p.add_argument("game", help="Built-in name (e.g. tictactoe) or '<path>:<symbol>'")
+    p.add_argument(
+        "--agents",
+        nargs="+",
+        required=True,
+        metavar="SPEC",
+        help="Two or more distinct agent specs: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>",
+    )
+    p.add_argument("--games", type=int, default=20, help="Games per pairing (default 20)")
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Base seed for reproducible, distinct-per-game play of the built-in agents",
+    )
+    p.add_argument(
+        "--no-swap",
+        action="store_true",
+        help="Keep each pairing's first agent as the starting player (default: alternate starts)",
+    )
+    p.add_argument("--max-turns", type=int, default=10_000, help="Hard cap on turns per game")
+    p.add_argument("--out", help="Write JSON results to this path")
+    p.add_argument("--quiet", action="store_true", help="Suppress per-pairing progress; print only the final leaderboard")
+    p.set_defaults(func=cmd_round_robin)
