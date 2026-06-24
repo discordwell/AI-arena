@@ -90,4 +90,19 @@ ai-arena play /abs/path/to/game.py:MyGame \
   --p1 random
 ```
 
+Before entering a new game in an (expensive) tournament, pre-flight it with
+`check-game`: a game-agnostic conformance check that the game implements the
+`Game` protocol the engine, replay, and baseline agents rely on. It verifies the
+state and moves are JSON round-trippable, that `apply_move` and the read-only
+methods never mutate their input state, that `legal_moves` and `apply_move`
+agree, that `terminal` returns a well-formed verdict, and (via seeded random
+self-play) that the game actually terminates. Exit code is 0 on pass, 1 on a
+protocol violation, so it drops into CI.
+
+```bash
+ai-arena check-game tictactoe
+ai-arena check-game /abs/path/to/game.py:MyGame --seed 1
+ai-arena check-game opus/game/game.py:OpusGame --playouts 50
+```
+
 For cross-language agents, use the JSONL subprocess protocol in `docs/protocol.md`.

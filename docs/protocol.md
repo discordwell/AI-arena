@@ -20,6 +20,24 @@ Required methods:
 
 `JSONValue` means the state/move must be JSON-serializable (dict/list/str/int/etc).
 
+Two contracts the rest of the harness (engine, replay, baseline agents) relies on:
+
+- **States and moves round-trip through JSON.** They are written to logs and sent
+  over the subprocess wire, so `json.loads(json.dumps(x))` must equal `x` — use
+  lists, not tuples, and string dict keys (a tuple would come back as a list and
+  silently differ from live play).
+- **`apply_move` returns a new state and never mutates its input**, and the
+  read-only methods (`legal_moves` / `terminal` / `render`) never mutate the
+  state they are handed.
+
+Validate a game against these (and that it terminates, that `legal_moves` and
+`apply_move` agree, and that `terminal` is well-formed) with the pre-flight
+checker:
+
+```
+ai-arena check-game <path>:<symbol>     # 0 = pass, 1 = protocol violation
+```
+
 ## Python Agent Interface
 
 Agents are objects with:

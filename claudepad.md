@@ -2,6 +2,44 @@
 
 ## Session Summaries
 
+### 2026-06-24 ~UTC — Add `check-game` conformance checker (+ fix latent Photon JSON bug it found)
+- New `src/ai_arena/check.py`: `check_game(game, *, playouts, max_turns, seed)` +
+  `CheckResult`/`GameReport` + `format_report` + `cmd_check_game`/`load_check_parser`
+  (registered in cli.py). New `ai-arena check-game <spec> [--playouts N] [--max-turns N]
+  [--seed S]`: a game-agnostic, pre-flight conformance check that a game implements the
+  Game protocol the engine/replay/baseline agents rely on. Closes a real gap — the
+  harness never trusts a game AT RUNTIME (forfeits on any exception), but there was no
+  way to validate a freshly dropped-in game BEFORE an expensive run.
+- Checks (each pass/warn/fail), grounded in repo history: name is a non-empty str;
+  initial_state is strict-JSON + round-trips; legal_moves returns lists for both seats,
+  doesn't mutate state, moves are JSON; apply_move doesn't mutate input + returns
+  round-trippable JSON; terminal is well-formed (winner ∈ {None,0,1}); render returns
+  str; + `playouts` seeded random self-play games checking deep invariants every ply
+  (no exceptions on legal inputs, JSON round-trip, no mutation, valid winners,
+  termination — all-cap = FAIL, some-cap = WARN). Mirrors engine.play_match turn
+  structure. Strict JSON = `allow_nan=False` (rejects NaN/Inf, invalid for cross-lang
+  bots). Mutation detected by per-call before/after fingerprint (each method isolated).
+  CLI exit 0 pass / 1 fail / 2 unloadable-spec.
+- KEY FIND: check-game immediately caught a LATENT bug in Photon (gemini): `fire_lasers`
+  stored laser-trace `path` coords as TUPLES `(r,c)`, which JSON-serialize to lists
+  `[r,c]` — so a replayed/subprocess state differed from live play (violates design rule
+  #1). `traces` is render/animation-only (legal_moves/apply_move/terminal rebuild from
+  state["board"]), so it was harmless today but a real contract violation. Fixed
+  board.py to emit lists (matches its OWN documented format at board.py:120); updated 3
+  tuple assertions in gemini/game/test_game.py. All 4 arena games now pass check-game.
+- Robustness contract = "never raises on a hostile game" (like the agents). Code review
+  (adversarial subagent) found 3 real holes in that promise — unguarded `game.name`
+  (property/`__str__` raising) and unguarded `Terminal` attribute access (is_terminal
+  `__bool__`/reason property raising), plus a bool-winner false negative (`True in
+  (None,0,1)`). All fixed: defensive name read + `_safe_repr`, fully-wrapped
+  `_terminal_shape_issue`, explicit bool rejection. Added 3 tests pinning them.
+- Tests: tests/test_check.py (32: real arena games conform [parametrized, also guards
+  the Photon fix], each broken-game double fails its target check, hostile-game
+  no-crash incl. raising name/terminal-attr, WARN-not-FAIL, determinism, formatter,
+  CLI exit codes). 221 → 253 tests, suite ~9.6s. Docs: README (Add Your Game),
+  ARCHITECTURE (check.py module + cli + testing), docs/protocol.md (game contracts +
+  pre-flight). check.py wraps every game call; cli exit codes wet-tested.
+
 ### 2026-06-24 ~UTC — Tunable built-in agents: `name:knob=value` spec syntax
 - New `src/ai_arena/agents/builtins.py`: `resolve_builtin_agent(spec)` +
   `BUILTIN_AGENTS` registry + `_parse_params` / `_Param.coerce`. A built-in agent

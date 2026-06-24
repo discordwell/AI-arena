@@ -95,9 +95,10 @@ def test_laser_kill():
     # Check traces
     assert "traces" in next_state
     trace = next_state["traces"][0]
-    # Path should go from (0,0) to (0,5)
+    # Path should go from (0,0) to (0,5). Coordinates are JSON lists so the
+    # trace survives a JSON round-trip (logs / subprocess bots / replay).
     path_coords = trace["path"]
-    assert (0, 5) in path_coords
+    assert [0, 5] in path_coords
 
 def test_laser_reflection():
     board = Board.empty()
@@ -133,13 +134,13 @@ def test_laser_reflection():
     # Identify the trace from (2,0)
     relevant_trace = None
     for t in traces:
-        # Check if t starts roughly at (2,0). 
-        # t["path"][0] is (2,0).
-        if t["path"][0] == (2, 0):
+        # Check if t starts roughly at (2,0).
+        # t["path"][0] is [2, 0] (a JSON list, not a tuple).
+        if t["path"][0] == [2, 0]:
             relevant_trace = t
             break
             
     assert relevant_trace
     # Contains reflection point (2,5) and hit point (0,5)
-    assert (2, 5) in relevant_trace["path"]
-    assert (0, 5) in relevant_trace["path"]
+    assert [2, 5] in relevant_trace["path"]
+    assert [0, 5] in relevant_trace["path"]

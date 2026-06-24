@@ -132,8 +132,24 @@ Three design rules shape everything below:
   interrupted or failed mid-run keeps its completed games, marks the round-robin
   `incomplete`, and stops scheduling further pairings (exit 130, like
   `benchmark`). Agent specs must be distinct, and `human` is rejected.
-- `cli.py` — `ai-arena list-games | list-agents | play | replay | benchmark |
-  round-robin | gui | tournament | standings`. `replay` reads a durable match log back to the terminal
+- `check.py` — `check_game` + the `check-game` command: a game-agnostic
+  protocol-conformance pre-flight. The harness never trusts a game *at runtime*
+  (it forfeits on any exception); this finds a broken game *before* an expensive
+  run instead. Using only the Game protocol it runs `check_game(game)` — a
+  battery returning pass/warn/fail `CheckResult`s plus an ending histogram — over
+  the opening position and `playouts` seeded random self-play games. It enforces
+  the contracts the rest of the harness assumes: state and moves are strict-JSON
+  and survive a round-trip (design rule #1; tuples/non-str keys are caught),
+  `apply_move` and the read-only methods (`legal_moves`/`terminal`/`render`)
+  never mutate their input (the contract every baseline agent + replay rely on,
+  and the class of the old `Photon legal_moves` bug), `legal_moves`/`apply_move`
+  agree, `terminal` returns a well-formed verdict (winner ∈ {None,0,1}), and the
+  game terminates under random play. Like the agents it never raises on a hostile
+  game — every game call (and attribute read) is wrapped, becoming a fail. Reuses
+  `tournament._game_factory` to load the spec; CLI exit is 0 pass / 1 fail / 2
+  unloadable-spec.
+- `cli.py` — `ai-arena list-games | list-agents | play | replay | check-game |
+  benchmark | round-robin | gui | tournament | standings`. `replay` reads a durable match log back to the terminal
   with no GUI/Tkinter dependency (summary + final board, optional `--moves`
   and per-frame `--frames`): it reconstructs and re-validates the match via
   `replay.py` when the game is loadable (inferred from the log, or `--game`),
@@ -200,9 +216,16 @@ The rules docs state the reduced caps and `tests/` pins them.
   defaults, int/float param coercion, partial params, non-builtin fall-through,
   every malformed/unknown/out-of-range param error, and a registry-vs-CLI drift
   guard), plus end-to-end checks that a tuned spec actually changes strength and
-  that a bad parameter fails fast, and all three home games (move generation,
+  that a bad parameter fails fast, the `check-game` conformance checker
+  (`test_check.py`: every home game conforms; a hand-built broken game fails
+  exactly its target check — mutating `legal_moves`/`apply_move`, non-JSON or
+  non-round-trippable state, legal/apply disagreement, malformed/bool/raising
+  `terminal`, non-terminating play, dead-on-arrival; the checker never raises on
+  a hostile game incl. a raising `name` or `Terminal` attribute; determinism;
+  formatter; CLI exit codes), and all three home games (move generation,
   rules edge cases, turn-limit pins).
   `gemini/game/test_game.py` holds additional Photon tests that run from the
-  repo root as well.
+  repo root as well (laser-trace coordinates are JSON lists so the state survives
+  a round-trip — a latent bug `check-game` surfaced and this change fixed).
 - `.github/workflows/` — CI runs `pytest -q` on Python 3.12 for pushes to
   `main` and PRs.

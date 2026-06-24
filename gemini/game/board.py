@@ -129,9 +129,13 @@ class Board:
                     # Initial beam
                     dr, dc = DIRS[p.orientation]
                     beams.append({
-                        "r": r + dr, "c": c + dc, 
-                        "dir": p.orientation, 
-                        "path": [(r,c)],
+                        "r": r + dr, "c": c + dc,
+                        "dir": p.orientation,
+                        # Coordinates are stored as JSON lists (not tuples): the
+                        # trace lives in the game state, and state must survive a
+                        # JSON round-trip (a tuple would come back as a list for
+                        # any replay / subprocess reader). See the docstring above.
+                        "path": [[r, c]],
                         "owner": p.player
                     })
 
@@ -151,7 +155,7 @@ class Board:
             path = beam["path"]
             
             while self.in_bounds(curr_r, curr_c):
-                path.append((curr_r, curr_c))
+                path.append([curr_r, curr_c])  # JSON list, not tuple (see above)
                 target = self.get(curr_r, curr_c)
                 
                 if target:
