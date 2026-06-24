@@ -2,6 +2,48 @@
 
 ## Session Summaries
 
+### 2026-06-24 ~UTC — Tunable built-in agents: `name:knob=value` spec syntax
+- New `src/ai_arena/agents/builtins.py`: `resolve_builtin_agent(spec)` +
+  `BUILTIN_AGENTS` registry + `_parse_params` / `_Param.coerce`. A built-in agent
+  spec can now carry strength knobs (`search:max_depth=6,node_budget=20000`,
+  `mcts:iterations=2000,exploration=1.0`, `greedy:safety_budget=5000`). Returns
+  `(AgentClass, kwargs)` for a built-in name (caller adds its own `seed`) or
+  `None` so callers fall through to `human` / `subprocess:` / `<path>:<symbol>`.
+  Closes the arena's real gap: you couldn't dial a baseline's difficulty (pit an
+  LLM bot against a stronger `mcts`, or compare `search` at several depths).
+- PURELY ADDITIVE: a bare name (`search`) parses to empty kwargs, so construction
+  is byte-identical to before. Centralizes the 4-way-duplicated built-in branch
+  (cli `_load_agent` / tournament `_agent_factory` / benchmark
+  `_seeded_agent_factory` / gui `_load_agent`) into one tested resolver; each site
+  keeps its own seed policy + human/subprocess/path branches. `random` has no
+  knobs (registry value `{}`), so `random:x=1` → "takes no parameters".
+- Validation: per-agent knob allowlist (unknown → lists allowed), int/float
+  coercion (`int("1.5")`/`float("hot")` rejected), lower bounds (depth/budgets/
+  iterations ≥ 1, exploration ≥ 0), finite-float guard (`inf`/`nan` rejected so
+  NaN can't poison MCTS UCT), duplicate-key + malformed-`key=value` errors. All
+  clean `ValueError`s. Arena tools resolve specs UP FRONT, so a bad param fails
+  fast before any (expensive) match — and the tournament's `--out` fence happens
+  only after resolution, so a bad param can't clobber a prior run's results.
+- Reserved-head tradeoff (documented): `mcts:Foo` is claimed by the resolver
+  (errors as a bad param) rather than falling through to load a file literally
+  named `mcts`. Astronomically unlikely (real specs have `/`+`.py` heads); keeps
+  the common typo (`search:max_dpeth=6`) producing a clear param error instead of
+  a confusing `FileNotFoundError`.
+- Wet-tested: `play search:max_depth=2`; benchmark depth-1 search 0-28 vs
+  full search (2 draws); round-robin ranks `search` > `search:max_depth=1` >
+  `random` with distinct labels; bad params fail fast on play/benchmark/
+  tournament (results file untouched). Adversarial code review: NO correctness
+  bugs, additive guarantee verified across all 4 loaders/factory shapes; drove
+  the +tournament/+gui tuned-spec tests below and the finite-float guard.
+- Tests: tests/test_builtins.py (24: bare-name defaults, int/float coercion,
+  partial params, non-builtin fall-through, every malformed/unknown/oob/inf/nan
+  error, registry-vs-CLI drift guard, gui-loader tuned spec) + integration in
+  test_cli.py (+2: tuned play, bad-param raise), test_benchmark.py (+2:
+  param-changes-strength, fail-fast) and test_tournament.py (+2: tuned competitor,
+  bad-param no-clobber). 192 → 221 tests; builtins.py 100% covered. Docs: README
+  quick-start, docs/protocol.md (tuning section), ARCHITECTURE (builtins.py +
+  testing), CLI help (`built-ins accept :knob=val`).
+
 ### 2026-06-23 ~UTC — Add `ai-arena round-robin` command (N-way agent leaderboard on one game)
 - New `ai-arena round-robin <game> --agents SPEC [SPEC ...] [--games N] [--seed S]
   [--no-swap] [--out f] [--quiet]` (`src/ai_arena/benchmark.py`:

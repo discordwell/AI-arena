@@ -39,22 +39,13 @@ def _load_game(spec: str) -> Game:
 def _load_agent(spec: str) -> Any:
     if spec == "human":
         return GUIHumanAgent()
-    if spec == "random":
-        from .agents.random_agent import RandomAgent
+    # Built-in agents, optionally with tunable parameters (e.g. "search:max_depth=6").
+    from .agents.builtins import resolve_builtin_agent
 
-        return RandomAgent()
-    if spec == "greedy":
-        from .agents.greedy import GreedyAgent
-
-        return GreedyAgent()
-    if spec == "search":
-        from .agents.search import SearchAgent
-
-        return SearchAgent()
-    if spec == "mcts":
-        from .agents.mcts import MctsAgent
-
-        return MctsAgent()
+    resolved = resolve_builtin_agent(spec)
+    if resolved is not None:
+        cls, kwargs = resolved
+        return cls(**kwargs)
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
         import shlex

@@ -38,22 +38,14 @@ def _seeded_agent_factory(spec: str) -> SeededAgentFactory:
     """
     if spec == "human":
         raise ValueError("the 'human' agent cannot be benchmarked (it blocks on stdin)")
-    if spec == "random":
-        from .agents.random_agent import RandomAgent
+    # Built-in agents, optionally with tunable parameters (e.g. "search:max_depth=6").
+    # Resolved eagerly so a bad parameter fails fast, before any (expensive) game runs.
+    from .agents.builtins import resolve_builtin_agent
 
-        return lambda seed: RandomAgent(seed=seed)
-    if spec == "greedy":
-        from .agents.greedy import GreedyAgent
-
-        return lambda seed: GreedyAgent(seed=seed)
-    if spec == "search":
-        from .agents.search import SearchAgent
-
-        return lambda seed: SearchAgent(seed=seed)
-    if spec == "mcts":
-        from .agents.mcts import MctsAgent
-
-        return lambda seed: MctsAgent(seed=seed)
+    resolved = resolve_builtin_agent(spec)
+    if resolved is not None:
+        cls, kwargs = resolved
+        return lambda seed: cls(seed=seed, **kwargs)
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
 
@@ -353,8 +345,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 def load_benchmark_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("benchmark", help="Play many games between two agents and report head-to-head rates")
     p.add_argument("game", help="Built-in name (e.g. tictactoe) or '<path>:<symbol>'")
-    p.add_argument("--p0", required=True, help="Contestant A: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
-    p.add_argument("--p1", required=True, help="Contestant B: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
+    p.add_argument("--p0", required=True, help="Contestant A: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)")
+    p.add_argument("--p1", required=True, help="Contestant B: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)")
     p.add_argument("--games", type=int, default=100, help="Number of games to play (default 100)")
     p.add_argument(
         "--seed",
@@ -619,7 +611,7 @@ def load_round_robin_parser(sub: argparse._SubParsersAction) -> None:
         nargs="+",
         required=True,
         metavar="SPEC",
-        help="Two or more distinct agent specs: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>",
+        help="Two or more distinct agent specs: random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)",
     )
     p.add_argument("--games", type=int, default=20, help="Games per pairing (default 20)")
     p.add_argument(

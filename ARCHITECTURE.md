@@ -72,6 +72,20 @@ Three design rules shape everything below:
   long-running bot process with a per-turn timeout. The bot's stderr is drained
   on a background thread (a chatty bot cannot deadlock the match by filling the
   pipe buffer) and its tail is attached to the error when the bot dies.
+- `agents/builtins.py` — `resolve_builtin_agent`, the single source of truth for
+  the four seedable built-ins and the tunable-strength spec syntax
+  `name:knob=value[,knob=value]` (e.g. `search:max_depth=6`,
+  `mcts:iterations=2000,exploration=1.0`). It returns `(AgentClass, kwargs)` for
+  a built-in name (the caller adds its own `seed`) or `None` so the caller falls
+  through to its `human` / `subprocess:` / `<path>:<symbol>` handling, and raises
+  a clear `ValueError` on an unknown knob, a malformed `key=value`, a non-numeric
+  value, or an out-of-range one. A `BUILTIN_AGENTS` registry pins each agent's
+  tunable params (type + lower bound). The CLI, tournament, benchmark, and GUI
+  loaders all route built-in names through it, so the parsing/validation lives in
+  one tested place and a bare name still builds exactly today's default agent
+  (the feature is additive). The arena tools (`benchmark` / `round-robin` /
+  `tournament`) resolve specs up front, so a bad parameter fails fast before any
+  match runs.
 - `tournament.py` — round-robin from a TOML config (`arena.toml`). Each
   pairing plays three contexts: both competitors' home games plus the third
   competitor's home game (falls back to `neutral_game` when there is no
@@ -182,8 +196,12 @@ The rules docs state the reduced caps and `tests/` pins them.
   with the GUI, the built-in
   baseline agents (`greedy`, `search`, `mcts` — tactics, strong/optimal
   tic-tac-toe play, legality/determinism/budget invariants, robustness on
-  misbehaving games), and all three home games (move generation, rules edge
-  cases, turn-limit pins).
+  misbehaving games), the tunable-agent resolver (`test_builtins.py`: bare-name
+  defaults, int/float param coercion, partial params, non-builtin fall-through,
+  every malformed/unknown/out-of-range param error, and a registry-vs-CLI drift
+  guard), plus end-to-end checks that a tuned spec actually changes strength and
+  that a bad parameter fails fast, and all three home games (move generation,
+  rules edge cases, turn-limit pins).
   `gemini/game/test_game.py` holds additional Photon tests that run from the
   repo root as well.
 - `.github/workflows/` — CI runs `pytest -q` on Python 3.12 for pushes to

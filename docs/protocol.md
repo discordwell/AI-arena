@@ -58,6 +58,31 @@ Selectable by name on the CLI (`--p0`/`--p1`) and in `arena.toml`:
 `ai-arena play --seed N` wires it through (each seat gets a distinct derived
 seed).
 
+#### Tuning a baseline's strength
+
+Anywhere a built-in agent name is accepted (`--p0`/`--p1`, `--agents`, and
+`agent = ...` in `arena.toml`), you may append a comma-separated parameter list
+to dial that baseline's strength:
+
+```
+search:max_depth=6,node_budget=20000
+mcts:iterations=2000,exploration=1.0
+greedy:safety_budget=5000
+```
+
+A bare name (`search`) keeps every default, so this is purely additive. Tunable
+knobs mirror the agents' constructor fields:
+
+- `greedy` — `safety_budget` (≥ 1)
+- `search` — `max_depth` (≥ 1), `node_budget` (≥ 1)
+- `mcts` — `iterations` (≥ 1), `node_budget` (≥ 1), `rollout_depth` (≥ 1),
+  `exploration` (≥ 0, a float)
+
+An unknown knob, a malformed `key=value`, a non-numeric value, or an
+out-of-range value is rejected with a clear error (and, for `benchmark` /
+`round-robin` / `tournament`, fails fast before any match runs). `seed` is not a
+spec parameter — each command supplies it through its own policy.
+
 ## Subprocess JSONL Agent Protocol
 
 To use a non-Python agent (or to wrap a model harness), run an executable and

@@ -59,26 +59,18 @@ def _game_factory(spec: str) -> Callable[[], Any]:
 
 
 def _agent_factory(spec: str) -> Callable[[], Any]:
-    if spec == "random":
-        from .agents.random_agent import RandomAgent
-
-        return RandomAgent
     if spec == "human":
         from .agents.human import HumanAgent
 
         return HumanAgent
-    if spec == "greedy":
-        from .agents.greedy import GreedyAgent
+    # Built-in agents, optionally with tunable parameters (e.g. "mcts:iterations=2000").
+    # Resolved eagerly so a bad parameter in the config fails fast, like a bad spec.
+    from .agents.builtins import resolve_builtin_agent
 
-        return GreedyAgent
-    if spec == "search":
-        from .agents.search import SearchAgent
-
-        return SearchAgent
-    if spec == "mcts":
-        from .agents.mcts import MctsAgent
-
-        return MctsAgent
+    resolved = resolve_builtin_agent(spec)
+    if resolved is not None:
+        cls, kwargs = resolved
+        return lambda: cls(**kwargs)
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
 

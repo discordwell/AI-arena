@@ -254,3 +254,19 @@ def test_standings_rejects_non_object_json(tmp_path: Path, capsys) -> None:
     bad.write_text("[1, 2, 3]", encoding="utf-8")
     assert main(["standings", str(bad)]) == 1
     assert "is not a JSON object" in capsys.readouterr().err
+
+
+def test_play_accepts_tuned_builtin_agent_spec(tmp_path: Path, capsys) -> None:
+    # A parametrized built-in spec (name:knob=value) drives a real match.
+    log = tmp_path / "tuned.json"
+    rc = main(
+        ["play", "tictactoe", "--p0", "search:max_depth=2", "--p1", "random", "--seed", "1", "--log", str(log)]
+    )
+    assert rc == 0
+    assert "game: tictactoe" in capsys.readouterr().out
+    assert json.loads(log.read_text(encoding="utf-8"))["result"]["reason"] in {"win", "draw"}
+
+
+def test_play_rejects_bad_agent_param() -> None:
+    with pytest.raises(ValueError, match="must be int"):
+        main(["play", "tictactoe", "--p0", "search:max_depth=deep", "--p1", "random"])

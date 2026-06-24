@@ -330,3 +330,28 @@ def test_cli_benchmark_writes_out_file(tmp_path: Path, capsys) -> None:
 def test_cli_benchmark_rejects_nonpositive_games() -> None:
     with pytest.raises(ValueError, match="positive"):
         main(["benchmark", "tictactoe", "--p0", "random", "--p1", "random", "--games", "0"])
+
+
+def test_tuned_agent_param_changes_strength() -> None:
+    # The whole point of tunable specs: a shallower search is a weaker player.
+    # Full-depth search never loses tic-tac-toe, so a depth-1 search cannot beat
+    # it -- it only ever draws or loses. This pins that the parameter takes
+    # effect end-to-end (resolver -> factory -> agent -> match).
+    res = run_benchmark(
+        game_factory=_ttt(),
+        a_factory=_seeded_agent_factory("search:max_depth=1"),
+        b_factory=_seeded_agent_factory("search"),
+        a_label="search:max_depth=1",
+        b_label="search",
+        games=12,
+        base_seed=1,
+    )
+    assert res.games == 12
+    assert res.a_wins == 0  # the shallow searcher never beats the full-depth one
+    assert res.b_wins > 0  # and loses some outright
+
+
+def test_cli_benchmark_fails_fast_on_bad_agent_param() -> None:
+    # A bad parameter is rejected at spec-resolution time, before any game runs.
+    with pytest.raises(ValueError, match="must be >= 1"):
+        main(["benchmark", "tictactoe", "--p0", "mcts:iterations=0", "--p1", "random", "--games", "5"])

@@ -34,22 +34,13 @@ def _load_agent(spec: str, *, seed: int | None = None) -> Any:
         from .agents.human import HumanAgent
 
         return HumanAgent()
-    if spec == "random":
-        from .agents.random_agent import RandomAgent
+    # Built-in agents, optionally with tunable parameters (e.g. "search:max_depth=6").
+    from .agents.builtins import resolve_builtin_agent
 
-        return RandomAgent(seed=seed)
-    if spec == "greedy":
-        from .agents.greedy import GreedyAgent
-
-        return GreedyAgent(seed=seed)
-    if spec == "search":
-        from .agents.search import SearchAgent
-
-        return SearchAgent(seed=seed)
-    if spec == "mcts":
-        from .agents.mcts import MctsAgent
-
-        return MctsAgent(seed=seed)
+    resolved = resolve_builtin_agent(spec)
+    if resolved is not None:
+        cls, kwargs = resolved
+        return cls(seed=seed, **kwargs)
     if spec.startswith("subprocess:"):
         from .agents.subprocess_agent import SubprocessAgent
 
@@ -244,8 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_play = sub.add_parser("play", help="Play a match")
     p_play.add_argument("game", help="Built-in name (e.g. tictactoe) or '<path>:<symbol>'")
-    p_play.add_argument("--p0", default="human", help="Agent0: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
-    p_play.add_argument("--p1", default="random", help="Agent1: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
+    p_play.add_argument("--p0", default="human", help="Agent0: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)")
+    p_play.add_argument("--p1", default="random", help="Agent1: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)")
     p_play.add_argument("--prime-pause", action="store_true", help="Pause after prime-numbered turns")
     p_play.add_argument("--log", help="Write JSON match log to this path")
     p_play.add_argument(
@@ -262,8 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Built-in name or '<path>:<symbol>' (for live matches; for --load-log, omit to infer when possible)",
     )
-    p_gui.add_argument("--p0", default="human", help="Agent0: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
-    p_gui.add_argument("--p1", default="random", help="Agent1: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol>")
+    p_gui.add_argument("--p0", default="human", help="Agent0: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)")
+    p_gui.add_argument("--p1", default="random", help="Agent1: human|random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val, e.g. search:max_depth=6)")
     p_gui.add_argument("--load-log", help="Open a JSON match log for replay")
     p_gui.add_argument("--save-log", help="Write a JSON match log here when the live match ends")
     p_gui.add_argument("--max-turns", type=int, default=10_000, help="Hard cap on turns for live play")

@@ -219,3 +219,35 @@ def test_bad_spec_still_fails_fast_before_any_match(tmp_path: Path) -> None:
         _run(comps, out_path=out)
 
     assert out.read_text(encoding="utf-8") == prior
+
+
+def test_tuned_agent_spec_runs_as_competitor() -> None:
+    # A parametrized built-in spec is usable as a competitor's agent. Full-depth
+    # `search` never loses tic-tac-toe, so the depth-1 competitor cannot out-point
+    # it however the (unseeded) tie-breaks fall.
+    comps = [
+        Competitor(id="strong", home_game="tictactoe", agent="search"),
+        Competitor(id="weak", home_game="tictactoe", agent="search:max_depth=1"),
+    ]
+    res = _run(comps)
+    assert res.complete
+    assert res.scoreboard["strong"]["losses"] == 0
+    assert res.scoreboard["strong"]["points"] >= res.scoreboard["weak"]["points"]
+
+
+def test_bad_agent_param_fails_fast_without_clobbering_out(tmp_path: Path) -> None:
+    # A bad agent *parameter* fails fast at up-front spec resolution, exactly like
+    # an unloadable spec — before the results file is fenced, so a prior run's
+    # file is left untouched.
+    prior = '{"complete": true, "matches": ["precious"]}'
+    out = tmp_path / "results.json"
+    out.write_text(prior, encoding="utf-8")
+
+    comps = [
+        Competitor(id="a", home_game="tictactoe", agent="search:max_depth=notint"),
+        Competitor(id="b", home_game="tictactoe", agent="random"),
+    ]
+    with pytest.raises(ValueError, match="must be int"):
+        _run(comps, out_path=out)
+
+    assert out.read_text(encoding="utf-8") == prior
