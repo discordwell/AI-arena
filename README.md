@@ -105,4 +105,22 @@ ai-arena check-game /abs/path/to/game.py:MyGame --seed 1
 ai-arena check-game opus/game/game.py:OpusGame --playouts 50
 ```
 
+`check-agent` is the companion pre-flight for agents — the side whose failures
+are the expensive ones (a bot that fails to spawn, times out, crashes, or
+returns illegal moves forfeits real matches). It constructs the agent exactly
+as a tournament would (spawn failures and startup crashes surface here, with
+the bot's stderr tail attached) and plays a few instrumented games against a
+seeded random opponent, verifying every returned move is legal, no exception
+escapes, and the agent never mutates the live state or legal-move list the
+engine hands it — the one defect a running match cannot detect. Games default
+to 2 (one per seat) because an agent's every move may be a paid LLM call. Same
+exit codes as `check-game`: 0 pass, 1 violation, 2 bad spec.
+
+```bash
+ai-arena check-agent greedy
+ai-arena check-agent "mcts:iterations=2000" --game opus/game/game.py:OpusGame --seed 1
+ai-arena check-agent "subprocess:python3 -u my_bot.py" --games 2
+ai-arena check-agent /abs/path/to/agent.py:MyAgent --games 0   # spawn/shape check only
+```
+
 For cross-language agents, use the JSONL subprocess protocol in `docs/protocol.md`.

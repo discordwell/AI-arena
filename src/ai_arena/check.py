@@ -4,9 +4,12 @@ import argparse
 import json
 import random
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .agents.random_agent import RandomAgent
+from .benchmark import _maybe_close, _seeded_agent_factory
 from .json_types import JSONValue
 from .tournament import _game_factory
 
@@ -460,31 +463,44 @@ def _endings_str(endings: dict[str, int]) -> str:
 _GLYPH = {PASS: "PASS", WARN: "WARN", FAIL: "FAIL"}
 
 
-def format_report(report: GameReport) -> str:
-    title = report.game_name or report.label
-    lines = [f"check-game: {title}"]
-    if report.game_name and report.game_name != report.label:
-        lines[0] += f"  (from {report.label})"
+def _header_line(kind: str, primary: str | None, label: str) -> str:
+    """``"check-x: <name>  (from <label>)"``, shared by both report formatters."""
+    header = f"{kind}: {primary or label}"
+    if primary and primary != label:
+        header += f"  (from {label})"
+    return header
 
-    name_w = max((len(c.name) for c in report.checks), default=0)
-    for c in report.checks:
+
+def _check_rows(checks: list[CheckResult]) -> list[str]:
+    name_w = max((len(c.name) for c in checks), default=0)
+    rows = []
+    for c in checks:
         line = f"  [{_GLYPH.get(c.status, c.status)}] {c.name:<{name_w}}"
         if c.detail:
             line += f"  {c.detail}"
-        lines.append(line)
+        rows.append(line)
+    return rows
+
+
+def _verdict_lines(checks: list[CheckResult], ok: bool) -> list[str]:
+    fails = sum(1 for c in checks if c.status == FAIL)
+    warns = sum(1 for c in checks if c.status == WARN)
+    if ok:
+        verdict = "PASS" if not warns else f"PASS ({warns} warning(s))"
+    else:
+        verdict = f"FAIL ({fails} check(s) failed)"
+    return ["", f"verdict: {verdict}"]
+
+
+def format_report(report: GameReport) -> str:
+    lines = [_header_line("check-game", report.game_name, report.label)]
+    lines.extend(_check_rows(report.checks))
 
     if report.playouts:
         lines.append("")
         lines.append(f"random playouts: {report.playouts}  ({_endings_str(report.endings) or 'none'})")
 
-    fails = sum(1 for c in report.checks if c.status == FAIL)
-    warns = sum(1 for c in report.checks if c.status == WARN)
-    lines.append("")
-    if report.ok:
-        verdict = "PASS" if not warns else f"PASS ({warns} warning(s))"
-    else:
-        verdict = f"FAIL ({fails} check(s) failed)"
-    lines.append(f"verdict: {verdict}")
+    lines.extend(_verdict_lines(report.checks, report.ok))
     return "\n".join(lines)
 
 
@@ -518,3 +534,503 @@ def load_check_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--max-turns", type=int, default=_DEFAULT_MAX_TURNS, help=f"Per-playout turn cap (default {_DEFAULT_MAX_TURNS})")
     p.add_argument("--seed", type=int, default=None, help="Seed the random playouts for a reproducible check")
     p.set_defaults(func=cmd_check_game)
+
+
+# ---------------------------------------------------------------------------
+# Agent conformance checker
+#
+# `check-game` pre-flights one untrusted half of a match; `check-agent` is its
+# companion for the other half. At runtime the engine forfeits an agent that
+# raises, times out, or returns an illegal move -- and the tournament forfeits a
+# competitor whose agent fails to start (`agent_spawn_failed:...`) -- but, as
+# with games, nothing could discover any of that *before* an expensive run.
+# Worse, two agent defects are invisible even at runtime: the engine hands the
+# agent the LIVE state object and legal-move list (engine.play_match) and later
+# validates the returned move against that same list, so an agent that mutates
+# the state silently corrupts the match from that ply on, and one that adds to
+# the legal list can slip an illegal move past the engine's own forfeit
+# detection. The checker enforces both here, where paying for the fingerprints
+# is acceptable.
+#
+# The checked agent plays seeded games against a seeded `random` opponent,
+# alternating seats, with every one of its calls instrumented:
+#
+#   - construction must succeed (a subprocess bot that fails to spawn, or an
+#     LLM bot with a broken API key, fails here / on its first move -- exactly
+#     the tournament's `agent_spawn_failed` forfeit, caught at the desk);
+#   - `name` must be a non-empty str and `select_move` callable;
+#   - every returned move must be one of the supplied legal moves (checked
+#     against a pre-call snapshot, exactly as the engine judges it);
+#   - no exception or TimeoutError may escape `select_move`;
+#   - `select_move` must not mutate the live state or the legal-move list.
+#     Pure in-place reordering (e.g. an unshielded shuffle) is a warning:
+#     harmless to today's engine, but it is engine-owned data.
+#
+# The game is presumed conforming -- run `check-game` on it first; if the game
+# itself misbehaves mid-check the report says so (a warning pointing at
+# check-game) instead of blaming the agent. Games default to 2 (one per seat)
+# because a checked agent may be an LLM bot whose every move is a paid API
+# call; a failing game stops the check early for the same reason.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_AGENT_GAMES = 2
+
+
+@dataclass(frozen=True, slots=True)
+class AgentReport:
+    label: str  # the spec/name the user asked to check
+    agent_name: str | None  # agent.name once constructed (None if construction failed)
+    game_name: str | None  # the game the agent was exercised on (None before one ran)
+    checks: list[CheckResult]
+    games: int  # instrumented games actually run
+    endings: dict[str, int]  # agent-perspective ending -> count ("win:...", "forfeit:...", ...)
+    moves: int  # checked-agent moves observed
+    avg_ms: float  # think time over those moves
+    max_ms: float
+
+    @property
+    def ok(self) -> bool:
+        """True when no check failed (warnings are allowed)."""
+        return all(c.status != FAIL for c in self.checks)
+
+
+@dataclass(slots=True)
+class _AgentGameOutcome:
+    """One instrumented game's findings (first concrete example per failure class)."""
+
+    ending: str = "max_turns"
+    agent_ms: list[float] = field(default_factory=list)
+    illegal: str = ""  # returned a move not in legal_moves
+    raised: str = ""  # select_move raised / timed out
+    impure: str = ""  # mutated the live state or the legal-move set
+    reordered: str = ""  # reordered the legal-move list in place (advisory)
+    game_error: str = ""  # the (presumed-conforming) game misbehaved: check aborted
+    agent_failed: bool = False  # the agent itself failed; stop scheduling further games
+
+
+def check_agent(
+    agent_factory: Callable[[int | None], Any],
+    game_factory: Callable[[], Any],
+    *,
+    games: int = _DEFAULT_AGENT_GAMES,
+    max_turns: int = _DEFAULT_MAX_TURNS,
+    seed: int | None = None,
+    label: str = "agent",
+) -> AgentReport:
+    """
+    Run conformance checks against the agent built by ``agent_factory``.
+
+    ``agent_factory`` takes a per-game seed (or None), like benchmark's
+    factories; a fresh agent is built for each game (so a stateful subprocess
+    bot is spawned exactly as the tournament would) and closed afterwards. Game
+    ``i`` seeds the agent with ``seed + 2i`` and the random opponent with
+    ``seed + 2i + 1``, so the whole check replays identically under ``--seed``.
+
+    Never raises on a misbehaving agent: every finding becomes a failed check in
+    the returned :class:`AgentReport` (``report.ok`` is True when none failed).
+    The agent plays ``games`` instrumented matches against a seeded random
+    opponent, alternating seats; the first game in which the agent fails ends
+    the run early (an agent that failed once will usually fail again, and every
+    further game may be real money).
+    """
+    n_games = max(0, int(games))
+    cap = max(1, int(max_turns))
+
+    checks: list[CheckResult] = []
+    endings: dict[str, int] = {}
+    all_ms: list[float] = []
+    ran = 0
+
+    agent_name: str | None = None
+    game_name: str | None = None
+    name_check: CheckResult | None = None
+    select_check: CheckResult | None = None
+
+    # First concrete example of each failure class, so the report is actionable.
+    construct_fail = ""
+    illegal = ""
+    raised = ""
+    impure = ""
+    reordered = ""
+    game_error = ""
+
+    # With --games 0 still construct once: spawn failure is the single most
+    # valuable pre-flight finding and costs no agent moves to discover.
+    for i in range(max(n_games, 1)):
+        agent_seed = None if seed is None else seed + 2 * i
+        opp_seed = None if seed is None else seed + 2 * i + 1
+
+        try:
+            agent = agent_factory(agent_seed)
+        except Exception as e:  # noqa: BLE001 - the checker reports, never propagates
+            suffix = f" (game {i + 1})" if i else ""
+            construct_fail = f"agent construction raised {type(e).__name__}: {e}{suffix}"
+            break
+
+        try:
+            if i == 0:
+                agent_name, name_check, select_check = _agent_shape(agent)
+                if select_check.status == FAIL:
+                    break  # nothing can be played without a callable select_move
+            if n_games == 0:
+                break
+
+            try:
+                game = game_factory()
+            except Exception as e:  # noqa: BLE001
+                game_error = f"the game could not be constructed ({type(e).__name__}: {e}); run check-game on it first"
+                break
+            if game_name is None:
+                raw = getattr(game, "name", None)
+                game_name = raw if isinstance(raw, str) and raw else None
+
+            outcome = _play_checked_game(
+                game,
+                agent,
+                RandomAgent(seed=opp_seed),
+                agent_is_p0=(i % 2 == 0),
+                cap=cap,
+                game_index=i + 1,
+            )
+            ran += 1
+            endings[outcome.ending] = endings.get(outcome.ending, 0) + 1
+            all_ms.extend(outcome.agent_ms)
+            illegal = illegal or outcome.illegal
+            raised = raised or outcome.raised
+            impure = impure or outcome.impure
+            reordered = reordered or outcome.reordered
+            game_error = game_error or outcome.game_error
+            if outcome.agent_failed or outcome.game_error:
+                break
+        finally:
+            _maybe_close(agent)
+
+    checks.append(
+        CheckResult("construct", FAIL, construct_fail) if construct_fail
+        else CheckResult("construct", PASS)
+    )
+    if name_check is not None:
+        checks.append(name_check)
+    if select_check is not None:
+        checks.append(select_check)
+
+    if ran:
+        checks.append(
+            CheckResult("plays/legal", FAIL, illegal) if illegal
+            else CheckResult("plays/legal", PASS)
+        )
+        checks.append(
+            CheckResult("plays/no-exceptions", FAIL, raised) if raised
+            else CheckResult("plays/no-exceptions", PASS, f"{ran} game(s), {len(all_ms)} agent move(s)")
+        )
+        if impure:
+            checks.append(CheckResult("plays/purity", FAIL, impure))
+        elif reordered:
+            checks.append(CheckResult("plays/purity", WARN, reordered))
+        else:
+            checks.append(CheckResult("plays/purity", PASS))
+    if game_error:
+        checks.append(CheckResult("plays/game", WARN, game_error))
+    if (
+        n_games
+        and not all_ms
+        and not (construct_fail or illegal or raised or impure)
+        and select_check is not None
+        and select_check.status == PASS
+    ):
+        # Games were requested, the agent was playable and never itself failed,
+        # yet it never moved: nothing was actually validated, and PASS would be
+        # a false promise. (An agent that failed its only turn is already a
+        # FAIL above; this row is for the game never giving the agent a turn.)
+        checks.append(
+            CheckResult(
+                "plays/coverage",
+                FAIL,
+                "no agent move was observed, so nothing was validated "
+                "(did the game give the agent a turn? run check-game on the game)",
+            )
+        )
+
+    return AgentReport(
+        label=label,
+        agent_name=agent_name,
+        game_name=game_name,
+        checks=checks,
+        games=ran,
+        endings=endings,
+        moves=len(all_ms),
+        avg_ms=(sum(all_ms) / len(all_ms) if all_ms else 0.0),
+        max_ms=(max(all_ms) if all_ms else 0.0),
+    )
+
+
+def _agent_shape(agent: Any) -> tuple[str | None, CheckResult, CheckResult]:
+    """The static protocol checks: ``name`` and ``select_move``, read defensively."""
+    try:
+        raw_name = getattr(agent, "name", None)
+        name_repr = _safe_repr(raw_name)
+    except Exception as e:  # noqa: BLE001 - a hostile property must not crash the checker
+        raw_name, name_repr = None, f"<raised {type(e).__name__}: {e}>"
+    agent_name = raw_name if isinstance(raw_name, str) and raw_name else None
+    name_check = (
+        CheckResult("name", PASS, name_repr) if agent_name
+        else CheckResult("name", FAIL, f"agent.name must be a non-empty str, got {name_repr}")
+    )
+
+    try:
+        select = getattr(agent, "select_move", None)
+    except Exception as e:  # noqa: BLE001
+        select, select_repr = None, f"<raised {type(e).__name__}: {e}>"
+    else:
+        select_repr = _safe_repr(select)
+    select_check = (
+        CheckResult("select_move", PASS) if callable(select)
+        else CheckResult(
+            "select_move",
+            FAIL,
+            f"agent must define a callable select_move(game, state, player, legal_moves), got {select_repr}",
+        )
+    )
+    return agent_name, name_check, select_check
+
+
+def _play_checked_game(
+    game: Any,
+    agent: Any,
+    opponent: Any,
+    *,
+    agent_is_p0: bool,
+    cap: int,
+    game_index: int,
+) -> _AgentGameOutcome:
+    """
+    Play one instrumented game between the checked agent and the trusted random
+    opponent, mirroring ``engine.play_match``'s turn structure (terminal before
+    each move, no-legal-moves forfeits the mover, strict seat alternation).
+
+    Only the checked agent's calls are instrumented. The game is presumed
+    conforming (run ``check-game`` first): a game-side exception aborts this
+    game with ``game_error`` set -- reported as a warning pointing at
+    check-game -- rather than blaming the agent for it.
+    """
+    out = _AgentGameOutcome()
+    agent_seat = 0 if agent_is_p0 else 1
+
+    def game_side(what: str, e: Exception) -> _AgentGameOutcome:
+        out.game_error = (
+            f"{what} raised {type(e).__name__}: {e} (game {game_index}); "
+            "the game itself misbehaves -- run check-game on it"
+        )
+        out.ending = "check_error"
+        return out
+
+    try:
+        state = game.initial_state()
+    except Exception as e:  # noqa: BLE001
+        return game_side("initial_state()", e)
+
+    player = 0
+    for turn in range(1, cap + 1):
+        try:
+            t = game.terminal(state)
+            is_term, winner, reason = bool(t.is_terminal), t.winner, str(t.reason)
+        except Exception as e:  # noqa: BLE001
+            return game_side("terminal(state)", e)
+        if is_term:
+            if winner is None:
+                out.ending = f"draw:{reason}"
+            else:
+                out.ending = f"win:{reason}" if winner == agent_seat else f"loss:{reason}"
+            return out
+
+        try:
+            legal = game.legal_moves(state, player)
+        except Exception as e:  # noqa: BLE001
+            return game_side(f"legal_moves(state, {player})", e)
+        if not isinstance(legal, list) or not legal:
+            out.ending = "loss:no_legal_moves" if player == agent_seat else "win:no_legal_moves"
+            return out
+
+        if player == agent_seat:
+            move = _instrumented_move(out, game, agent, state, player, legal, game_index, turn)
+            if out.agent_failed:
+                return out
+        else:
+            try:
+                move = opponent.select_move(game, state, player, legal)
+            except Exception as e:  # noqa: BLE001 - only reachable via a hostile game
+                return game_side("the random opponent's select_move", e)
+
+        try:
+            state = game.apply_move(state, player, move)
+        except Exception as e:  # noqa: BLE001
+            return game_side(f"apply_move(state, {player}, {_safe_repr(move)})", e)
+
+        player = 1 - player
+
+    return out  # ending stays "max_turns"
+
+
+def _instrumented_move(
+    out: _AgentGameOutcome,
+    game: Any,
+    agent: Any,
+    state: JSONValue,
+    player: int,
+    legal: list[JSONValue],
+    game_index: int,
+    turn: int,
+) -> JSONValue:
+    """
+    One checked ``select_move`` call. The agent receives the *live* ``state``
+    and ``legal`` objects (exactly what the engine hands it); membership is
+    judged against a pre-call snapshot and mutation by pre/post fingerprints.
+    On a failure, sets the finding on ``out`` and flags ``agent_failed``.
+    """
+    where = f"(game {game_index}, turn {turn})"
+    snapshot = list(legal)
+    state_fp = _fingerprint(state)
+    legal_fp = _fingerprint(legal)
+    elems_fp = sorted(_fingerprint(m) or "" for m in legal) if legal_fp is not None else None
+
+    t0 = time.perf_counter()
+    try:
+        move = agent.select_move(game, state, player, legal)
+    except TimeoutError as e:
+        out.raised = (
+            f"select_move timed out {where}: {e}"
+            " -- a real match forfeits this agent (reason 'timeout')"
+        )
+        out.ending = "forfeit:timeout"
+        out.agent_failed = True
+        return None
+    except Exception as e:  # noqa: BLE001 - the checker reports, never propagates
+        out.raised = (
+            f"select_move raised {type(e).__name__} {where}: {e}"
+            " -- a real match forfeits this agent (reason 'agent_error')"
+        )
+        out.ending = "forfeit:agent_error"
+        out.agent_failed = True
+        return None
+    out.agent_ms.append((time.perf_counter() - t0) * 1000.0)
+
+    if state_fp is not None and _fingerprint(state) != state_fp:
+        out.impure = (
+            f"select_move mutated the live match state {where}"
+            " -- the engine hands agents the real state object; mutating it corrupts the match"
+        )
+        out.ending = "aborted:state_mutation"
+        out.agent_failed = True
+        return None
+    if legal_fp is not None and _fingerprint(legal) != legal_fp:
+        after = [_fingerprint(m) for m in legal]
+        if None in after or sorted(after) != elems_fp:  # type: ignore[arg-type]
+            out.impure = (
+                f"select_move changed the contents of the legal-move list {where}"
+                " -- the engine validates the returned move against this same list, "
+                "so mutating it can bypass illegal-move detection"
+            )
+            out.ending = "aborted:legal_moves_mutation"
+            out.agent_failed = True
+            return None
+        out.reordered = out.reordered or (
+            f"select_move reordered the legal-move list in place {where}"
+            " -- harmless to today's engine, but agents should not mutate "
+            "engine-owned data (copy before shuffling)"
+        )
+
+    try:
+        is_legal = move in snapshot
+    except Exception:  # noqa: BLE001 - a hostile __eq__ must not crash the checker
+        is_legal = False
+    if not is_legal:
+        hint = ""
+        try:
+            if isinstance(move, tuple) and list(move) in snapshot:
+                hint = " (hint: the move is a tuple; JSON moves are lists -- return the list form)"
+        except Exception:  # noqa: BLE001
+            pass
+        out.illegal = (
+            f"select_move returned a move not in legal_moves {where}: {_safe_repr(move)}{hint}"
+            " -- a real match forfeits this agent (reason 'illegal_move')"
+        )
+        out.ending = "forfeit:illegal_move"
+        out.agent_failed = True
+        return None
+    return move
+
+
+def format_agent_report(report: AgentReport) -> str:
+    lines = [_header_line("check-agent", report.agent_name, report.label)]
+    lines.extend(_check_rows(report.checks))
+
+    if report.games:
+        lines.append("")
+        game = report.game_name or "the game"
+        lines.append(f"games vs seeded random on {game}: {report.games}  ({_endings_str(report.endings) or 'none'})")
+        lines.append(f"agent moves: {report.moves}  (think ms avg {report.avg_ms:.1f}, max {report.max_ms:.1f})")
+
+    lines.extend(_verdict_lines(report.checks, report.ok))
+    return "\n".join(lines)
+
+
+def cmd_check_agent(args: argparse.Namespace) -> int:
+    if args.agent == "human":
+        print("error: the 'human' agent cannot be checked (it blocks on stdin)", file=sys.stderr)
+        return 2
+    try:
+        # Resolving the spec (a bad knob, a bad path) is the user's spec being
+        # wrong -- a hard error, distinct from a FAIL verdict. Constructing the
+        # agent is NOT done here: spawn failure is precisely what the checker
+        # reports (the tournament's agent_spawn_failed, caught pre-flight).
+        agent_factory = _seeded_agent_factory(args.agent)
+    except Exception as e:  # noqa: BLE001
+        print(f"error: could not resolve agent {args.agent!r} ({type(e).__name__}: {e})", file=sys.stderr)
+        return 2
+    try:
+        game_factory = _game_factory(args.game)
+        game_factory()  # a broken game spec is a setup error, not an agent failure
+    except Exception as e:  # noqa: BLE001
+        print(f"error: could not load game {args.game!r} ({type(e).__name__}: {e})", file=sys.stderr)
+        return 2
+
+    report = check_agent(
+        agent_factory,
+        game_factory,
+        games=int(args.games),
+        max_turns=int(args.max_turns),
+        seed=args.seed,
+        label=args.agent,
+    )
+    print(format_agent_report(report))
+    return 0 if report.ok else 1
+
+
+def load_check_agent_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "check-agent",
+        help="Check that an agent constructs and plays cleanly (pre-flight conformance)",
+    )
+    p.add_argument(
+        "agent",
+        help="random|greedy|search|mcts|subprocess:<cmd>|<path>:<symbol> (built-ins accept :knob=val; 'human' cannot be checked)",
+    )
+    p.add_argument(
+        "--game",
+        default="tictactoe",
+        help="Game to exercise the agent on: built-in name or '<path>:<symbol>' (default tictactoe; run check-game on it first)",
+    )
+    p.add_argument(
+        "--games",
+        type=int,
+        default=_DEFAULT_AGENT_GAMES,
+        help=f"Instrumented games vs a seeded random opponent, alternating seats (default {_DEFAULT_AGENT_GAMES}: an agent's every move may be a paid LLM call)",
+    )
+    p.add_argument("--max-turns", type=int, default=_DEFAULT_MAX_TURNS, help=f"Per-game turn cap (default {_DEFAULT_MAX_TURNS})")
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Base seed for a reproducible check (seeds the built-in agents and the random opponent per game)",
+    )
+    p.set_defaults(func=cmd_check_agent)

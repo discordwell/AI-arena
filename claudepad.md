@@ -2,6 +2,53 @@
 
 ## Session Summaries
 
+### 2026-07-01 ~UTC — Add `check-agent`: pre-flight conformance checker for agents
+- New in `src/ai_arena/check.py` (same module as check-game — it owns the conformance
+  family): `check_agent(agent_factory, game_factory, *, games=2, max_turns, seed, label)`
+  + `AgentReport` + `format_agent_report` + `cmd_check_agent`/`load_check_agent_parser`
+  (registered in cli.py). New `ai-arena check-agent <spec> [--game <spec>] [--games N]
+  [--max-turns N] [--seed S]`. Closes the mirror-image gap of check-game: agent failures
+  are the EXPENSIVE ones (tournament `agent_spawn_failed:` forfeit; timeout/agent_error/
+  illegal_move forfeits mid-run, each match potentially hours of LLM calls) and had no
+  pre-flight. Same exit codes: 0 pass / 1 FAIL / 2 bad spec (human rejected, exit 2).
+- KEY DESIGN: two agent defects are invisible even at runtime — engine.play_match hands
+  the agent the LIVE state object + legal list (engine.py:160) and validates `move not in
+  legal` against that SAME list (engine.py:173), so a state-mutating agent silently
+  corrupts the match and a list-content-mutating agent can bypass illegal-move detection.
+  check-agent detects both via pre/post JSON fingerprints (reuses check-game's
+  _fingerprint); in-place REORDERING (shuffle without copying) = WARN (harmless to
+  today's engine, still engine-owned data); content change = FAIL. All built-ins verified
+  clean (greedy/search/mcts all `list(legal_moves)` before shuffling).
+- Battery: construct (spawn failure = FAIL verdict with the tournament's exact failure
+  mode caught at the desk), name/select_move shape (defensively read, hostile properties
+  can't crash it), plays/legal (membership vs pre-call snapshot = exactly the engine's
+  judgment; tuple-move near-miss gets a hint), plays/no-exceptions (TimeoutError vs
+  agent_error distinguished, matching engine forfeit reasons; subprocess stderr tail
+  flows into the detail), plays/purity, plays/game (a misbehaving game = WARN pointing
+  at check-game, never blamed on the agent), plays/coverage (zero agent moves observed
+  = FAIL, no vacuous PASS — but suppressed when the agent itself already failed, so a
+  first-turn agent error isn't double-reported/misattributed; wet test caught that).
+- Reuses benchmark's `_seeded_agent_factory` (same spec language everywhere:
+  builtin[:knobs] / subprocess: / path:symbol) + `_maybe_close`; fresh agent per game
+  with benchmark's exact seed window (agent seed+2i, opponent seed+2i+1); first
+  agent-failed game stops scheduling (each further game may be real money). Playout loop
+  mirrors engine.play_match turn structure; agent plays a seeded RandomAgent, seats
+  alternate. Default --games 2 = one game per seat, LLM-cost-conscious. Report: endings
+  histogram from the agent's perspective (win:reason / forfeit:timeout / ...) + think-ms
+  avg/max. Formatter shares refactored row/verdict helpers with check-game (output
+  byte-identical — test_check.py's 32 all pass untouched).
+- Wet-tested: greedy/tuned-mcts on tictactoe + real Caldera/Photon (real reasons in
+  histogram, mcts ~38ms/move); real JSONL stub bots — good bot PASS end-to-end, illegal
+  bot FAIL with move repr, startup-crash bot FAIL with "fatal: missing API key" stderr
+  tail in the report (the exact pre-flight diagnostic the tool exists for); --games 0
+  spawn-only; human/bad-knob/bad-game exit 2; --max-turns cap.
+- Tests: tests/test_check_agent.py (30: built-ins pass, per-defect broken agents incl.
+  the engine-invisible list-packing smuggle, reorder WARN + verdict wording, hostile
+  attrs, containment/close-per-game/seat-alternation/determinism/zero-games, coverage
+  suppression regression, formatter, 7 CLI exit-code paths). 253 → 283 tests, ~9.5s.
+  Docs: README (check-agent block), ARCHITECTURE (check.py + cli list + testing),
+  docs/protocol.md (agent no-mutation contract + pre-flight pointer).
+
 ### 2026-06-24 ~UTC — Add `check-game` conformance checker (+ fix latent Photon JSON bug it found)
 - New `src/ai_arena/check.py`: `check_game(game, *, playouts, max_turns, seed)` +
   `CheckResult`/`GameReport` + `format_report` + `cmd_check_game`/`load_check_parser`

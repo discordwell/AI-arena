@@ -49,6 +49,22 @@ Agents are objects with:
 forfeit). It may raise `TimeoutError` (treated as a timeout) or any other
 exception (treated as an agent error) — both forfeit the turn.
 
+One contract the engine cannot enforce at runtime: **`select_move` must not
+mutate `state` or `legal_moves`.** The engine hands the agent its *live* state
+object and validates the returned move against the same `legal_moves` list, so
+mutating the state silently corrupts the rest of the match, and changing the
+list's contents can bypass illegal-move detection. Copy before you scribble
+(the built-ins do: `moves = list(legal_moves)` then shuffle the copy).
+
+Validate an agent against all of this — construction/spawn, protocol shape,
+move legality, no escaping exceptions, no mutation — with the pre-flight
+checker (games default to 2, since an agent's every move may be a paid LLM
+call):
+
+```
+ai-arena check-agent <spec> [--game <spec>] [--games N]   # 0 = pass, 1 = violation
+```
+
 ### Built-in agents
 
 Selectable by name on the CLI (`--p0`/`--p1`) and in `arena.toml`:

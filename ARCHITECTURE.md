@@ -148,8 +148,32 @@ Three design rules shape everything below:
   game — every game call (and attribute read) is wrapped, becoming a fail. Reuses
   `tournament._game_factory` to load the spec; CLI exit is 0 pass / 1 fail / 2
   unloadable-spec.
+  Also owns `check_agent` + the `check-agent` command: the same pre-flight for
+  the other untrusted half of a match. Agent failures are the *expensive* ones —
+  a bot that fails to spawn forfeits its tournament matches
+  (`agent_spawn_failed:`), and one that times out, crashes, or moves illegally
+  forfeits mid-run — and two defects are invisible even then: the engine hands
+  agents the live state object and legal-move list and validates the returned
+  move against that same list, so a state-mutating agent silently corrupts the
+  match and a legal-list-mutating one can bypass illegal-move detection
+  entirely. `check_agent(agent_factory, game_factory)` constructs a fresh agent
+  per game exactly as `benchmark` would (reusing `_seeded_agent_factory`; spawn
+  failures and startup stderr surface in the report) and plays seeded,
+  seat-alternating instrumented games against a seeded `random` opponent,
+  checking construction, `name`/`select_move` shape, move legality (against a
+  pre-call snapshot, judged exactly as the engine does, with a hint for the
+  classic tuple-vs-list mistake), no escaping exception/timeout, and
+  state/legal-list purity via pre/post fingerprints (in-place reordering is a
+  WARN — harmless today, but engine-owned data; a set change is a FAIL). The
+  game is presumed conforming (run `check-game` first): a game-side error is a
+  WARN pointing there, never blamed on the agent, and a run that observed zero
+  agent moves FAILs coverage rather than passing vacuously. Games default to 2
+  (one per seat) because each agent move may be a paid LLM call, and the first
+  agent-failed game stops the run. Reports an agent-perspective ending histogram
+  plus think-time (avg/max ms); `human` is rejected (blocks on stdin); same exit
+  codes as `check-game`.
 - `cli.py` — `ai-arena list-games | list-agents | play | replay | check-game |
-  benchmark | round-robin | gui | tournament | standings`. `replay` reads a durable match log back to the terminal
+  check-agent | benchmark | round-robin | gui | tournament | standings`. `replay` reads a durable match log back to the terminal
   with no GUI/Tkinter dependency (summary + final board, optional `--moves`
   and per-frame `--frames`): it reconstructs and re-validates the match via
   `replay.py` when the game is loadable (inferred from the log, or `--game`),
@@ -222,8 +246,19 @@ The rules docs state the reduced caps and `tests/` pins them.
   non-round-trippable state, legal/apply disagreement, malformed/bool/raising
   `terminal`, non-terminating play, dead-on-arrival; the checker never raises on
   a hostile game incl. a raising `name` or `Terminal` attribute; determinism;
-  formatter; CLI exit codes), and all three home games (move generation,
-  rules edge cases, turn-limit pins).
+  formatter; CLI exit codes), the `check-agent` conformance checker
+  (`test_check_agent.py`: built-ins pass; a broken agent fails exactly its
+  target check — illegal move (with the tuple hint), raising/timing-out
+  `select_move`, live-state mutation, legal-list content mutation (the defect
+  the engine's own validation cannot see), construction failure, missing
+  `select_move`, bad `name`; in-place reordering is a WARN not a FAIL; hostile
+  attributes never crash the checker; a first-turn agent failure is not doubly
+  reported as a coverage failure; a misbehaving game is a WARN pointing at
+  check-game plus a coverage FAIL, never blamed on the agent; fresh agent per
+  game, each closed; failure stops scheduling; seat alternation; seeded
+  determinism; formatter; CLI exit codes incl. spawn-failure = FAIL verdict and
+  `human`/bad-spec/bad-game = exit 2), and all three home games (move
+  generation, rules edge cases, turn-limit pins).
   `gemini/game/test_game.py` holds additional Photon tests that run from the
   repo root as well (laser-trace coordinates are JSON lists so the state survives
   a round-trip — a latent bug `check-game` surfaced and this change fixed).
