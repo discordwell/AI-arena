@@ -205,11 +205,18 @@ Three design rules shape everything below:
   round-robin still contain their own interrupts and report partial results),
   and a broken stdout pipe (`... | head`) exits 141 silently.
 - `gui.py` — generic Tkinter board GUI for live matches and log replay.
-- `replay.py` — rebuilds the state sequence from a match log's move history;
-  falls back to the engine's recorded result for forfeit endings that game
-  rules alone cannot detect. Also owns `infer_game_spec_from_log` (mapping a
-  log's stored `game` name back to a loadable spec), shared by the `replay`
-  command and the GUI so neither path needs to hardcode game locations twice.
+- `replay.py` — rebuilds the state sequence from a match log's move history,
+  re-validating each applied move against the live game rules as it goes (a
+  logged move not in `legal_moves` for the reconstructed state means the log is
+  corrupt/tampered or from a different game version; the strict games raise from
+  `apply_move` anyway, but this makes the "re-validated" contract hold for a
+  *lenient* game too, which would otherwise apply a bad move as a silent no-op
+  and reconstruct a wrong state — the `replay` command and GUI catch it and fall
+  back to the stored result). Falls back to the engine's recorded result for
+  forfeit endings that game rules alone cannot detect. Also owns
+  `infer_game_spec_from_log` (mapping a log's stored `game` name back to a
+  loadable spec), shared by the `replay` command and the GUI so neither path
+  needs to hardcode game locations twice.
 - `games/tictactoe.py` — built-in neutral game.
 
 ## Model Folders (`codex/`, `opus/`, `gemini/`)

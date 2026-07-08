@@ -176,6 +176,55 @@ def test_replay_with_explicit_game_spec(tmp_path: Path, capsys) -> None:
     assert "n=3" in out  # rendered from the reconstructed terminal state
 
 
+def test_replay_falls_back_when_logged_move_is_illegal(tmp_path: Path, capsys) -> None:
+    # A loadable game plus a tampered log whose applied move is illegal: replay's
+    # legality re-check raises, and `replay` degrades to the stored result with a
+    # warning instead of presenting a silently-wrong reconstruction.
+    game = tmp_path / "lenient.py"
+    game.write_text(
+        "from ai_arena.game import Terminal\n"
+        "class LenientGame:\n"
+        "    name = 'lenient'\n"
+        "    def initial_state(self):\n"
+        "        return {'n': 0}\n"
+        "    def legal_moves(self, state, player):\n"
+        "        return [1]\n"
+        "    def apply_move(self, state, player, move):\n"
+        "        return {'n': state['n'] + 1}\n"  # lenient: ignores an illegal move
+        "    def terminal(self, state):\n"
+        "        return Terminal(state['n'] >= 5, None, 'cap' if state['n'] >= 5 else '')\n"
+        "    def render(self, state):\n"
+        "        return f\"n={state['n']}\"\n",
+        encoding="utf-8",
+    )
+    spec = str(game) + ":LenientGame"
+    log = tmp_path / "tampered.json"
+    log.write_text(
+        json.dumps(
+            {
+                "game": "lenient",
+                "result": {
+                    "winner": 0,
+                    "reason": "cap",
+                    "turns": 2,
+                    "move_history": [
+                        {"turn": 1, "player": 0, "move": 1, "ms": 0.0, "note": None},
+                        {"turn": 2, "player": 1, "move": 99, "ms": 0.0, "note": None},  # illegal
+                    ],
+                },
+                "final_render": "stored board",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["replay", str(log), "--game", spec]) == 0
+    captured = capsys.readouterr()
+    assert "could not replay" in captured.err  # warned it degraded, did not crash
+    assert "reason: cap" in captured.out  # stored result shown
+    assert "stored board" in captured.out  # stored render, not a wrong reconstruction
+
+
 def test_replay_errors_cleanly_on_missing_log(tmp_path: Path, capsys) -> None:
     assert main(["replay", str(tmp_path / "nope.json")]) == 1
     assert "could not read match log" in capsys.readouterr().err

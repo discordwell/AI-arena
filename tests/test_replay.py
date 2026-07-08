@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from ai_arena.game import Terminal
 from ai_arena.games.tictactoe import TicTacToe
 from ai_arena.loading import load_symbol
 from ai_arena.replay import (
@@ -7,6 +10,29 @@ from ai_arena.replay import (
     replay_from_log_payload,
     replay_from_move_history,
 )
+
+
+class _LenientGame:
+    """A game whose apply_move ignores the move instead of raising on an illegal
+    one -- the class of game for which replay's legality re-check earns its keep
+    (a strict game would raise from apply_move on its own)."""
+
+    name = "lenient"
+
+    def initial_state(self) -> dict:
+        return {"n": 0}
+
+    def legal_moves(self, state: dict, player: int) -> list:
+        return [1]
+
+    def apply_move(self, state: dict, player: int, move) -> dict:
+        return {"n": state["n"] + 1}  # advances regardless of `move`
+
+    def terminal(self, state: dict) -> Terminal:
+        return Terminal(state["n"] >= 5, None, "cap" if state["n"] >= 5 else "")
+
+    def render(self, state: dict) -> str:
+        return str(state["n"])
 
 
 def test_infer_game_spec_resolves_known_names_and_ignores_unknown() -> None:
@@ -41,6 +67,22 @@ def test_replay_reconstructs_states_and_terminal() -> None:
     assert rep.terminal.is_terminal
     assert rep.terminal.winner == 0
     assert rep.terminal.reason == "win"
+
+
+def test_replay_rejects_illegal_logged_move_on_a_lenient_game() -> None:
+    # An engine log only ever contains legal applied moves, so a genuine log
+    # replays fine; a corrupt/tampered one whose applied move is not legal in the
+    # reconstructed state must be surfaced. A strict game raises from apply_move,
+    # but a lenient game would silently apply the bad move and reconstruct a
+    # *wrong* state -- so replay checks legality explicitly.
+    game = _LenientGame()
+
+    ok = [{"turn": 1, "player": 0, "move": 1, "ms": 0.0, "note": None}]
+    assert replay_from_move_history(game, ok).states[-1] == {"n": 1}  # legal: fine
+
+    tampered = ok + [{"turn": 2, "player": 1, "move": 99, "ms": 0.0, "note": None}]  # 99 not in [1]
+    with pytest.raises(ValueError, match="not legal in the reconstructed state"):
+        replay_from_move_history(game, tampered)
 
 
 def test_replay_handles_illegal_move_forfeit_from_log_payload() -> None:

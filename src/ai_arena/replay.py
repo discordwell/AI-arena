@@ -82,6 +82,22 @@ def replay_from_move_history(game: Game, move_history: list[dict[str, Any]]) -> 
     states: list[JSONValue] = [game.initial_state()]
     for m in moves:
         if m.note is None:
+            # Re-validate legality against the live game rules before applying.
+            # The engine only ever logs a move it accepted as legal, so a genuine
+            # log always passes; a move that is not legal in the reconstructed
+            # state means the log is corrupt/tampered or was produced by a
+            # different version of the game. A strict game already raises from
+            # apply_move on such a move, but a lenient one can apply it as a
+            # silent no-op and reconstruct a *wrong* state -- so check it
+            # explicitly, making replay's "re-validated against the rules"
+            # contract hold for every game, not just the strict ones. Callers
+            # (the `replay` command and the GUI) catch this and fall back to the
+            # engine-recorded result.
+            if m.move not in game.legal_moves(states[-1], m.player):
+                raise ValueError(
+                    f"logged move {m.move!r} at turn {m.turn} (player {m.player}) is not legal "
+                    "in the reconstructed state; the match log is inconsistent with the game rules"
+                )
             states.append(game.apply_move(states[-1], m.player, m.move))
             continue
 
