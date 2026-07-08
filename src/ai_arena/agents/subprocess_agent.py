@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import selectors
+import queue
 import subprocess
 import threading
 import time
@@ -22,9 +22,10 @@ class SubprocessAgent:
     JSONL bot protocol (see docs/protocol.md).
 
     The bot is a long-running process that reads one JSON object per line from stdin and
-    writes one JSON object per line to stdout. Its stderr is drained on a background
-    thread (so a chatty bot can never block on a full pipe buffer) and the most recent
-    lines are attached to errors when the bot dies, for diagnosability.
+    writes one JSON object per line to stdout. Both pipes are drained on background
+    threads: stdout so a move that arrives buffered behind another line is never
+    stranded (and a chatty bot cannot block on a full pipe buffer), and stderr so its
+    most recent lines can be attached to errors when the bot dies, for diagnosability.
     """
 
     command: list[str]
@@ -33,7 +34,8 @@ class SubprocessAgent:
     _proc: subprocess.Popen[str] = field(init=False, repr=False)
     _stdin: TextIO = field(init=False, repr=False)
     _stdout: TextIO = field(init=False, repr=False)
-    _sel: selectors.BaseSelector = field(init=False, repr=False)
+    _stdout_lines: queue.Queue[str | None] = field(init=False, repr=False)
+    _stdout_thread: threading.Thread = field(init=False, repr=False)
     _stderr_tail: deque[str] = field(init=False, repr=False)
     _stderr_lock: threading.Lock = field(init=False, repr=False)
     _stderr_thread: threading.Thread = field(init=False, repr=False)
@@ -51,14 +53,36 @@ class SubprocessAgent:
         assert self._proc.stdout is not None
         self._stdin: TextIO = self._proc.stdin
         self._stdout: TextIO = self._proc.stdout
-        self._sel = selectors.DefaultSelector()
-        self._sel.register(self._stdout, selectors.EVENT_READ)
+        # Drain stdout on a background thread into a queue rather than mixing an
+        # fd-level select() with a buffered readline(): a single read pulls every
+        # currently-available line into the wrapper's userspace buffer, so a
+        # subsequent select() on the fd blocks even though a complete line (e.g.
+        # the move, written right after a debug line in one flush) is already
+        # buffered and waiting. The thread hands select_move whole lines as they
+        # arrive; None marks EOF.
+        self._stdout_lines = queue.Queue()
+        self._stdout_thread = threading.Thread(
+            target=self._drain_stdout, name=f"{self.name}-stdout", daemon=True
+        )
+        self._stdout_thread.start()
         self._stderr_tail = deque(maxlen=_STDERR_TAIL_LINES)
         self._stderr_lock = threading.Lock()
         self._stderr_thread = threading.Thread(
             target=self._drain_stderr, name=f"{self.name}-stderr", daemon=True
         )
         self._stderr_thread.start()
+
+    def _drain_stdout(self) -> None:
+        # One queue item per stdout line, in arrival order; None marks EOF (the
+        # bot's stdout closed, usually because it exited). Never raises out of
+        # the thread -- a read error surfaces to select_move as EOF.
+        try:
+            for line in self._stdout:
+                self._stdout_lines.put(line)
+        except Exception:
+            pass
+        finally:
+            self._stdout_lines.put(None)
 
     def _drain_stderr(self) -> None:
         stderr = self._proc.stderr
@@ -105,12 +129,12 @@ class SubprocessAgent:
                 except subprocess.TimeoutExpired:
                     proc.kill()
         finally:
-            sel = getattr(self, "_sel", None)
-            if sel is not None:
-                sel.close()
-            thread = getattr(self, "_stderr_thread", None)
-            if thread is not None and thread.is_alive():
-                thread.join(timeout=0.5)
+            # Terminating the process closes its pipes, so the drain threads hit
+            # EOF and exit; join them briefly so they don't outlive the agent.
+            for attr in ("_stdout_thread", "_stderr_thread"):
+                thread = getattr(self, attr, None)
+                if thread is not None and thread.is_alive():
+                    thread.join(timeout=0.5)
 
     def __del__(self) -> None:  # best-effort cleanup
         try:
@@ -150,12 +174,13 @@ class SubprocessAgent:
             if remaining <= 0:
                 raise TimeoutError(f"bot timed out after {self.timeout_s}s")
 
-            events = self._sel.select(timeout=min(0.25, remaining))
-            if not events:
+            try:
+                # Poll in short slices so the deadline is honored even if the bot
+                # goes silent; the reader thread has already framed whole lines.
+                line = self._stdout_lines.get(timeout=min(0.25, remaining))
+            except queue.Empty:
                 continue
-
-            line = self._stdout.readline()
-            if not line:
+            if line is None:  # EOF: the bot's stdout closed (it likely exited)
                 raise RuntimeError(f"bot stdout closed{self._death_context()}")
             line = line.strip()
             if not line:

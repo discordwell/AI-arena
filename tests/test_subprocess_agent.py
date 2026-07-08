@@ -74,6 +74,48 @@ def test_subprocess_agent_chatty_stderr_does_not_deadlock(tmp_path: Path) -> Non
         agent.close()
 
 
+def test_subprocess_agent_move_buffered_behind_other_lines(tmp_path: Path) -> None:
+    # The protocol lets a bot print other JSON/debug lines on stdout before its
+    # move. A bot that writes those lines AND the move in a single flush puts
+    # them all in one read chunk: a naive select()-on-fd + buffered readline()
+    # returns the first line, strands the move in the wrapper's userspace buffer,
+    # then blocks on a now-empty fd until the turn times out. The reader-thread
+    # draining must still deliver the move -- promptly, and across turns.
+    bot_src = "\n".join(
+        [
+            "import json, sys",
+            "for line in sys.stdin:",
+            "    msg = json.loads(line)",
+            "    if msg.get('type') != 'turn':",
+            "        continue",
+            "    move = msg['legal_moves'][0]",
+            "    blob = (",
+            "        json.dumps({'type': 'log', 'msg': 'thinking'}) + '\\n'",
+            "        + json.dumps({'type': 'note', 'depth': 3}) + '\\n'",
+            "        + json.dumps({'type': 'move', 'move': move}) + '\\n'",
+            "    )",
+            "    sys.stdout.write(blob)",  # one write -> one read chunk on the parent side
+            "    sys.stdout.flush()",
+        ]
+    )
+    # A short per-turn timeout: if the move were stranded, this would raise
+    # TimeoutError instead of returning, so the regression fails loudly.
+    agent = _make_agent(tmp_path, bot_src, timeout_s=5.0)
+    try:
+        game = TicTacToe()
+        state = game.initial_state()
+        legal = game.legal_moves(state, 0)
+        assert agent.select_move(game, state, 0, legal) == legal[0]
+
+        # A second turn confirms the reader thread + queue keep framing lines
+        # correctly after the first response (no leftover / off-by-one).
+        state = game.apply_move(state, 0, legal[0])
+        legal2 = game.legal_moves(state, 1)
+        assert agent.select_move(game, state, 1, legal2) == legal2[0]
+    finally:
+        agent.close()
+
+
 def test_subprocess_agent_surfaces_stderr_when_bot_dies_mid_turn(tmp_path: Path) -> None:
     bot_src = "\n".join(
         [
