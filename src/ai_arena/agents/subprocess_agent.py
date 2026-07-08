@@ -14,6 +14,14 @@ from ..json_types import JSONValue
 
 _STDERR_TAIL_LINES = 40
 _STDERR_LINE_CAP = 500
+# Cap the unread stdout lines buffered from the bot. The reader thread drains
+# stdout continuously (even between turns), so without a bound a bot that streams
+# stdout could grow the parent's memory without limit. A bounded queue makes a
+# full buffer back-pressure the bot at the OS pipe -- the way the old
+# select()-driven read did -- while staying generous enough that a legitimately
+# chatty turn is never throttled (select_move drains concurrently while a turn is
+# active, so the queue only accumulates between turns, when a bot should be idle).
+_STDOUT_QUEUE_MAX = 1024
 
 
 @dataclass(slots=True)
@@ -59,8 +67,9 @@ class SubprocessAgent:
         # subsequent select() on the fd blocks even though a complete line (e.g.
         # the move, written right after a debug line in one flush) is already
         # buffered and waiting. The thread hands select_move whole lines as they
-        # arrive; None marks EOF.
-        self._stdout_lines = queue.Queue()
+        # arrive; None marks EOF. Bounded (see _STDOUT_QUEUE_MAX) so a streaming
+        # bot back-pressures at the pipe instead of growing the parent's heap.
+        self._stdout_lines = queue.Queue(maxsize=_STDOUT_QUEUE_MAX)
         self._stdout_thread = threading.Thread(
             target=self._drain_stdout, name=f"{self.name}-stdout", daemon=True
         )
@@ -129,12 +138,29 @@ class SubprocessAgent:
                 except subprocess.TimeoutExpired:
                     proc.kill()
         finally:
-            # Terminating the process closes its pipes, so the drain threads hit
-            # EOF and exit; join them briefly so they don't outlive the agent.
-            for attr in ("_stdout_thread", "_stderr_thread"):
-                thread = getattr(self, attr, None)
-                if thread is not None and thread.is_alive():
-                    thread.join(timeout=0.5)
+            # The stdout reader may be parked on a full queue (a bot that streamed
+            # stdout): terminating the bot closes the pipe but does not wake a
+            # blocked put(), so keep *consuming* from the queue until that reader
+            # exits -- each get() lets it push one more line and read on toward
+            # EOF. Draining just until the queue is momentarily empty is not
+            # enough: the reader can refill from the pipe's buffer and re-park, so
+            # loop on the thread being alive, bounded by a deadline so a wedged
+            # bot cannot hang close().
+            stdout_thread = getattr(self, "_stdout_thread", None)
+            q = getattr(self, "_stdout_lines", None)
+            if stdout_thread is not None and q is not None:
+                deadline = time.monotonic() + 1.0
+                while stdout_thread.is_alive() and time.monotonic() < deadline:
+                    try:
+                        q.get(timeout=0.05)
+                    except queue.Empty:
+                        pass
+                stdout_thread.join(timeout=0.1)
+            # The stderr reader drains into a bounded deque (it never parks), so a
+            # plain join retires it.
+            stderr_thread = getattr(self, "_stderr_thread", None)
+            if stderr_thread is not None and stderr_thread.is_alive():
+                stderr_thread.join(timeout=0.5)
 
     def __del__(self) -> None:  # best-effort cleanup
         try:

@@ -116,6 +116,39 @@ def test_subprocess_agent_move_buffered_behind_other_lines(tmp_path: Path) -> No
         agent.close()
 
 
+def test_subprocess_agent_bounded_stdout_queue_still_delivers(tmp_path: Path) -> None:
+    # The reader thread drains stdout continuously, so the queue is bounded to
+    # back-pressure a bot that streams stdout (rather than growing parent memory
+    # without limit, as an unbounded queue would). A bot that emits more than the
+    # cap in debug lines before its move must STILL have its move delivered: the
+    # consumer drains through the bound, unblocking the reader, and finds it.
+    from ai_arena.agents.subprocess_agent import _STDOUT_QUEUE_MAX
+
+    bot_src = "\n".join(
+        [
+            "import json, sys",
+            "for line in sys.stdin:",
+            "    msg = json.loads(line)",
+            "    if msg.get('type') != 'turn':",
+            "        continue",
+            "    move = msg['legal_moves'][0]",
+            f"    for i in range({_STDOUT_QUEUE_MAX} + 50):",  # overflow the queue bound
+            "        sys.stdout.write(json.dumps({'type': 'log', 'i': i}) + '\\n')",
+            "    sys.stdout.write(json.dumps({'type': 'move', 'move': move}) + '\\n')",
+            "    sys.stdout.flush()",
+        ]
+    )
+    agent = _make_agent(tmp_path, bot_src, timeout_s=10.0)
+    try:
+        assert agent._stdout_lines.maxsize == _STDOUT_QUEUE_MAX  # the bound is in place
+        game = TicTacToe()
+        state = game.initial_state()
+        legal = game.legal_moves(state, 0)
+        assert agent.select_move(game, state, 0, legal) == legal[0]
+    finally:
+        agent.close()
+
+
 def test_subprocess_agent_surfaces_stderr_when_bot_dies_mid_turn(tmp_path: Path) -> None:
     bot_src = "\n".join(
         [
