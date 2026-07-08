@@ -46,6 +46,22 @@ Three design rules shape everything below:
 - `loading.py` — `load_symbol("<path>:<symbol>")`, the dynamic-import
   mechanism the CLI/tournament use to reach games and agents in model
   folders.
+- `specs.py` — the single source of truth for turning a user-written *spec*
+  (a game name / `<path>:<symbol>`, or an agent `name[:knob=val]` /
+  `subprocess:<cmd>` / `<path>:<symbol>`) into a factory: `resolve_game_factory`,
+  `resolve_agent_factory`, `parse_subprocess_command`, and the `BUILTIN_GAMES`
+  registry. Every entry point (`cli` / `gui` / `benchmark` / `round-robin` /
+  `tournament`) used to re-implement this dispatch inline, so the subprocess
+  parsing (with its error message), the built-in fall-through, and the
+  `<path>:<symbol>` loading were each copied four times and free to drift; they
+  now all route through here, the same treatment `agents/builtins.py` gives the
+  tunable-agent grammar. `resolve_agent_factory` returns a *seed-aware* factory
+  `make(seed) -> agent` so one resolver serves two seeding policies: `play
+  --seed` / `benchmark` thread a per-game seed into the seedable built-ins for
+  reproducibility, while `tournament` / `gui` pass `None` to leave them
+  deliberately unseeded. `human` is resolved by each caller (its class differs —
+  stdin vs GUI — and some entry points reject it). `tests/test_specs.py` pins the
+  resolver and guards that all four entry points still agree.
 - `agents/` — built-ins: `human` (stdin), `random`, `greedy`, `search`, `mcts`,
   and `SubprocessAgent`. `greedy` is a game-agnostic baseline (in `greedy.py`) that
   uses only the `Game` protocol — it grabs an immediate win, else avoids moves
@@ -80,9 +96,9 @@ Three design rules shape everything below:
   through to its `human` / `subprocess:` / `<path>:<symbol>` handling, and raises
   a clear `ValueError` on an unknown knob, a malformed `key=value`, a non-numeric
   value, or an out-of-range one. A `BUILTIN_AGENTS` registry pins each agent's
-  tunable params (type + lower bound). The CLI, tournament, benchmark, and GUI
-  loaders all route built-in names through it, so the parsing/validation lives in
-  one tested place and a bare name still builds exactly today's default agent
+  tunable params (type + lower bound). The entry-point loaders route built-in
+  names through it (via `specs.py`), so the parsing/validation lives in one
+  tested place and a bare name still builds exactly today's default agent
   (the feature is additive). The arena tools (`benchmark` / `round-robin` /
   `tournament`) resolve specs up front, so a bad parameter fails fast before any
   match runs.
@@ -249,7 +265,10 @@ The rules docs state the reduced caps and `tests/` pins them.
   defaults, int/float param coercion, partial params, non-builtin fall-through,
   every malformed/unknown/out-of-range param error, and a registry-vs-CLI drift
   guard), plus end-to-end checks that a tuned spec actually changes strength and
-  that a bad parameter fails fast, the `check-game` conformance checker
+  that a bad parameter fails fast, the shared spec resolver (`test_specs.py`:
+  game/agent/subprocess/path resolution, the two seeding policies, and a drift
+  guard that all four entry-point loaders resolve a spec identically), the
+  `check-game` conformance checker
   (`test_check.py`: every home game conforms; a hand-built broken game fails
   exactly its target check — mutating `legal_moves`/`apply_move`, non-JSON or
   non-round-trippable state, legal/apply disagreement, malformed/bool/raising

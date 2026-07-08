@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import shlex
 import statistics
 import sys
 from dataclasses import asdict, dataclass
@@ -9,8 +8,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .engine import MatchResult, atomic_write_json, play_match
-from .loading import load_symbol
-from .tournament import _game_factory
+from .specs import resolve_agent_factory
+from .specs import resolve_game_factory as _game_factory
 
 # Engine forfeit reasons that mean the *losing* agent failed, rather than losing
 # by the game's own rules. Kept in sync with engine.play_match.
@@ -31,32 +30,16 @@ def _seeded_agent_factory(spec: str) -> SeededAgentFactory:
     reproducible under ``--seed``.
 
     Non-seedable built-ins, subprocess bots, and ``<path>:<symbol>`` agents
-    ignore the seed (they have no seed parameter to thread).
+    ignore the seed (they have no seed parameter to thread). A bad built-in
+    parameter is rejected eagerly by the shared resolver, before any (expensive)
+    game runs.
 
     ``human`` is rejected: it blocks on stdin and cannot play an unattended
     benchmark.
     """
     if spec == "human":
         raise ValueError("the 'human' agent cannot be benchmarked (it blocks on stdin)")
-    # Built-in agents, optionally with tunable parameters (e.g. "search:max_depth=6").
-    # Resolved eagerly so a bad parameter fails fast, before any (expensive) game runs.
-    from .agents.builtins import resolve_builtin_agent
-
-    resolved = resolve_builtin_agent(spec)
-    if resolved is not None:
-        cls, kwargs = resolved
-        return lambda seed: cls(seed=seed, **kwargs)
-    if spec.startswith("subprocess:"):
-        from .agents.subprocess_agent import SubprocessAgent
-
-        cmd = shlex.split(spec.removeprefix("subprocess:").strip())
-        if not cmd:
-            raise ValueError("subprocess agent requires a command, e.g. subprocess:python3 -u bot.py")
-        return lambda seed: SubprocessAgent(cmd)
-
-    obj = load_symbol(spec)
-    factory: Callable[[], Any] = obj if callable(obj) else (lambda: obj)
-    return lambda seed: factory()
+    return resolve_agent_factory(spec)
 
 
 @dataclass(frozen=True, slots=True)

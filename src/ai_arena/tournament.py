@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shlex
 import sys
 import time
 import tomllib
@@ -11,8 +10,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .engine import MatchResult, atomic_write_json, play_match
-from .games.tictactoe import TicTacToe
-from .loading import load_symbol
+from .specs import resolve_agent_factory
+from .specs import resolve_game_factory as _game_factory  # re-exported: benchmark/check/tests import it here
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,47 +41,20 @@ class TournamentResult:
     scoreboard: dict[str, dict[str, int]]
 
 
-def _builtin_game_factory(name: str) -> Callable[[], Any] | None:
-    if name == "tictactoe":
-        return TicTacToe
-    return None
-
-
-def _game_factory(spec: str) -> Callable[[], Any]:
-    builtin = _builtin_game_factory(spec)
-    if builtin is not None:
-        return builtin
-    obj = load_symbol(spec)
-    if callable(obj):
-        return obj  # type: ignore[return-value]
-    return lambda: obj
-
-
 def _agent_factory(spec: str) -> Callable[[], Any]:
+    """
+    Resolve a competitor's agent spec to a zero-arg factory (a fresh agent per
+    match). Built-in tunable params are validated eagerly (config typos fail
+    fast, like a bad spec). The tournament deliberately leaves built-ins unseeded
+    -- varied play across rounds -- so it threads ``None`` through the shared
+    seed-aware resolver.
+    """
     if spec == "human":
         from .agents.human import HumanAgent
 
         return HumanAgent
-    # Built-in agents, optionally with tunable parameters (e.g. "mcts:iterations=2000").
-    # Resolved eagerly so a bad parameter in the config fails fast, like a bad spec.
-    from .agents.builtins import resolve_builtin_agent
-
-    resolved = resolve_builtin_agent(spec)
-    if resolved is not None:
-        cls, kwargs = resolved
-        return lambda: cls(**kwargs)
-    if spec.startswith("subprocess:"):
-        from .agents.subprocess_agent import SubprocessAgent
-
-        cmd = shlex.split(spec.removeprefix("subprocess:").strip())
-        if not cmd:
-            raise ValueError("subprocess agent requires a command, e.g. subprocess:python3 -u bot.py")
-        return lambda: SubprocessAgent(cmd)
-
-    obj = load_symbol(spec)
-    if callable(obj):
-        return obj  # type: ignore[return-value]
-    return lambda: obj
+    make = resolve_agent_factory(spec)
+    return lambda: make(None)
 
 
 def _pairings(xs: list[Competitor]) -> list[tuple[Competitor, Competitor]]:

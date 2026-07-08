@@ -10,53 +10,28 @@ from typing import Any, Callable
 from .engine import atomic_write_json
 from .game import Game, PlayerId, Terminal
 from .json_types import JSONValue
-from .loading import load_symbol
 from .replay import (
     infer_game_spec_from_log as _infer_game_spec_from_log,
     load_match_log,
     replay_from_log_payload,
 )
+from .specs import resolve_agent_factory, resolve_game_factory
 
 
 class GUIHumanAgent:
     name: str = "human"
 
 
-def _builtin_games() -> dict[str, Any]:
-    from .games.tictactoe import TicTacToe
-
-    return {"tictactoe": TicTacToe}
-
-
 def _load_game(spec: str) -> Game:
-    builtins = _builtin_games()
-    if spec in builtins:
-        return builtins[spec]()  # type: ignore[return-value]
-    obj = load_symbol(spec)
-    return obj() if callable(obj) else obj
+    return resolve_game_factory(spec)()  # type: ignore[return-value]
 
 
 def _load_agent(spec: str) -> Any:
     if spec == "human":
         return GUIHumanAgent()
-    # Built-in agents, optionally with tunable parameters (e.g. "search:max_depth=6").
-    from .agents.builtins import resolve_builtin_agent
-
-    resolved = resolve_builtin_agent(spec)
-    if resolved is not None:
-        cls, kwargs = resolved
-        return cls(**kwargs)
-    if spec.startswith("subprocess:"):
-        from .agents.subprocess_agent import SubprocessAgent
-        import shlex
-
-        cmd = shlex.split(spec.removeprefix("subprocess:").strip())
-        if not cmd:
-            raise ValueError("subprocess agent requires a command, e.g. subprocess:python3 -u bot.py")
-        return SubprocessAgent(cmd)
-
-    obj = load_symbol(spec)
-    return obj() if callable(obj) else obj
+    # Built-in / subprocess / <path>:<symbol> via the shared resolver; the GUI
+    # deliberately leaves built-ins unseeded (varied play), so it passes None.
+    return resolve_agent_factory(spec)(None)
 
 
 def _maybe_close(agent: Any) -> None:

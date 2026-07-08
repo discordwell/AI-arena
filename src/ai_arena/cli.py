@@ -3,32 +3,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import sys
 from pathlib import Path
 from typing import Any
 
+from .agents.builtins import BUILTIN_AGENTS
 from .benchmark import load_benchmark_parser, load_round_robin_parser
 from .check import load_check_agent_parser, load_check_parser
 from .engine import play_match
-from .games.tictactoe import TicTacToe
-from .loading import load_symbol
 from .replay import Replay, infer_game_spec_from_log, load_match_log, replay_from_log_payload
+from .specs import BUILTIN_GAMES, resolve_agent_factory, resolve_game_factory
 from .tournament import load_standings_parser, load_tournament_parser
 
 
-def _builtin_games() -> dict[str, Any]:
-    return {
-        "tictactoe": TicTacToe(),
-    }
-
-
 def _load_game(spec: str) -> Any:
-    builtins = _builtin_games()
-    if spec in builtins:
-        return builtins[spec]
-    obj = load_symbol(spec)
-    return obj() if callable(obj) else obj
+    return resolve_game_factory(spec)()
 
 
 def _load_agent(spec: str, *, seed: int | None = None) -> Any:
@@ -36,31 +25,20 @@ def _load_agent(spec: str, *, seed: int | None = None) -> Any:
         from .agents.human import HumanAgent
 
         return HumanAgent()
-    # Built-in agents, optionally with tunable parameters (e.g. "search:max_depth=6").
-    from .agents.builtins import resolve_builtin_agent
-
-    resolved = resolve_builtin_agent(spec)
-    if resolved is not None:
-        cls, kwargs = resolved
-        return cls(seed=seed, **kwargs)
-    if spec.startswith("subprocess:"):
-        from .agents.subprocess_agent import SubprocessAgent
-
-        cmd = shlex.split(spec.removeprefix("subprocess:").strip())
-        if not cmd:
-            raise ValueError("subprocess agent requires a command, e.g. subprocess:python3 -u bot.py")
-        return SubprocessAgent(cmd)
-
-    obj = load_symbol(spec)
-    return obj() if callable(obj) else obj
+    # Built-in / subprocess / <path>:<symbol> all route through the shared
+    # resolver; `play --seed` threads a per-seat seed into the seedable built-ins.
+    return resolve_agent_factory(spec)(seed)
 
 
-# Built-in agents selectable by name (besides path/subprocess specs).
-_BUILTIN_AGENTS = ("greedy", "human", "mcts", "random", "search")
+# Built-in agents selectable by name (besides path/subprocess specs). Derived
+# from the resolver's registry (the single source of truth) plus `human`, so a
+# new seedable built-in shows up in `list-agents` automatically instead of
+# silently missing until someone remembers to edit this tuple too.
+_BUILTIN_AGENTS = tuple(sorted(set(BUILTIN_AGENTS) | {"human"}))
 
 
 def cmd_list_games(_: argparse.Namespace) -> int:
-    for name in sorted(_builtin_games().keys()):
+    for name in sorted(BUILTIN_GAMES):
         print(name)
     return 0
 
