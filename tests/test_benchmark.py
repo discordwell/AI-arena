@@ -327,9 +327,12 @@ def test_cli_benchmark_writes_out_file(tmp_path: Path, capsys) -> None:
     assert list(out.parent.glob("*.tmp")) == []  # atomic write leaves no temp
 
 
-def test_cli_benchmark_rejects_nonpositive_games() -> None:
-    with pytest.raises(ValueError, match="positive"):
-        main(["benchmark", "tictactoe", "--p0", "random", "--p1", "random", "--games", "0"])
+def test_cli_benchmark_rejects_nonpositive_games(capsys) -> None:
+    rc = main(["benchmark", "tictactoe", "--p0", "random", "--p1", "random", "--games", "0"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "positive" in err
 
 
 def test_tuned_agent_param_changes_strength() -> None:
@@ -351,7 +354,10 @@ def test_tuned_agent_param_changes_strength() -> None:
     assert res.b_wins > 0  # and loses some outright
 
 
-def test_cli_benchmark_fails_fast_on_bad_agent_param() -> None:
+def test_cli_benchmark_fails_fast_on_bad_agent_param(capsys) -> None:
     # A bad parameter is rejected at spec-resolution time, before any game runs.
-    with pytest.raises(ValueError, match="must be >= 1"):
-        main(["benchmark", "tictactoe", "--p0", "mcts:iterations=0", "--p1", "random", "--games", "5"])
+    rc = main(["benchmark", "tictactoe", "--p0", "mcts:iterations=0", "--p1", "random", "--games", "5"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "must be >= 1" in err

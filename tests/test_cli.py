@@ -71,9 +71,12 @@ def test_play_loads_game_from_path_spec(tmp_path: Path, capsys) -> None:
     assert "winner: 0" in out
 
 
-def test_play_rejects_empty_subprocess_command() -> None:
-    with pytest.raises(ValueError, match="subprocess agent requires a command"):
-        main(["play", "tictactoe", "--p0", "subprocess:", "--p1", "random"])
+def test_play_rejects_empty_subprocess_command(capsys) -> None:
+    rc = main(["play", "tictactoe", "--p0", "subprocess:", "--p1", "random"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "subprocess agent requires a command" in err
 
 
 def test_replay_summarizes_and_renders_log(tmp_path: Path, capsys) -> None:
@@ -267,6 +270,60 @@ def test_play_accepts_tuned_builtin_agent_spec(tmp_path: Path, capsys) -> None:
     assert json.loads(log.read_text(encoding="utf-8"))["result"]["reason"] in {"win", "draw"}
 
 
-def test_play_rejects_bad_agent_param() -> None:
+def test_play_rejects_bad_agent_param(capsys) -> None:
+    rc = main(["play", "tictactoe", "--p0", "search:max_depth=deep", "--p1", "random"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "must be int" in err
+
+
+# ---------------------------------------------------------------------------
+# The main() error boundary: a bad spec/config anywhere in the CLI exits with a
+# one-line `error:` message (rc 2) instead of a traceback, matching the clean
+# error paths the check-*/replay/standings commands already had; Ctrl-C exits
+# 130 and a broken stdout pipe exits 141, both silent successes downstream of
+# a shell convention. AI_ARENA_DEBUG=1 restores the traceback for debugging.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_reports_unloadable_game_spec_cleanly(tmp_path: Path, capsys) -> None:
+    rc = main(["play", str(tmp_path / "missing.py") + ":Nope", "--p0", "random", "--p1", "random"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: FileNotFoundError")
+    assert "missing.py" in err
+    assert "Traceback" not in err
+
+
+def test_cli_reports_missing_tournament_config_cleanly(tmp_path: Path, capsys) -> None:
+    rc = main(["tournament", "--config", str(tmp_path / "nope.toml")])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: FileNotFoundError")
+    assert "Traceback" not in err
+
+
+def test_cli_interrupt_exits_130(monkeypatch, capsys) -> None:
+    def interrupted(_: object) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("ai_arena.cli.cmd_list_games", interrupted)
+    assert main(["list-games"]) == 130
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_cli_broken_pipe_exits_141_silently(monkeypatch, capsys) -> None:
+    def gone_reader(_: object) -> int:
+        raise BrokenPipeError
+
+    monkeypatch.setattr("ai_arena.cli.cmd_list_games", gone_reader)
+    assert main(["list-games"]) == 141
+    captured = capsys.readouterr()
+    assert captured.err == ""  # a closed pipe is the reader's choice, not an error
+
+
+def test_cli_debug_env_var_restores_the_traceback(monkeypatch) -> None:
+    monkeypatch.setenv("AI_ARENA_DEBUG", "1")
     with pytest.raises(ValueError, match="must be int"):
         main(["play", "tictactoe", "--p0", "search:max_depth=deep", "--p1", "random"])

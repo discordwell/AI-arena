@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -225,7 +226,14 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="ai-arena")
+    p = argparse.ArgumentParser(
+        prog="ai-arena",
+        description="Control harness for the AI arena: play, replay, check, benchmark, and rank games and agents.",
+        epilog=(
+            "A bad spec/config exits 2 with a one-line 'error:' message and Ctrl-C exits 130; "
+            "set AI_ARENA_DEBUG=1 for full tracebacks."
+        ),
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     p_list = sub.add_parser("list-games", help="List built-in games")
@@ -290,7 +298,33 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except KeyboardInterrupt:
+        # Commands that can contain an interrupt (benchmark / round-robin) do so
+        # themselves and return 130 with a partial summary; one that reaches
+        # here has nothing partial to report. Same shell convention: 128+SIGINT.
+        print("interrupted", file=sys.stderr)
+        return 130
+    except BrokenPipeError:
+        # The reader went away (e.g. `ai-arena replay ... | head`) -- not an
+        # error. Point stdout at devnull so the interpreter's exit-time flush
+        # of the broken pipe cannot raise a second traceback; 128+SIGPIPE.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except Exception:
+            pass
+        return 141
+    except Exception as e:
+        # Anything else reaching this boundary is a setup problem -- a bad
+        # spec, param, or config (runtime game/agent failures are contained
+        # per-match by the engine, tournament, and benchmark). Report it the
+        # way the subcommands report theirs instead of dumping a traceback,
+        # and exit 2 like the rest of the bad-spec paths.
+        if os.environ.get("AI_ARENA_DEBUG"):
+            raise
+        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

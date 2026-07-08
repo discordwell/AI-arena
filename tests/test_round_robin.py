@@ -327,16 +327,25 @@ def test_cli_round_robin_writes_out_file(tmp_path: Path) -> None:
     assert list(out.parent.glob("*.tmp")) == []  # atomic write leaves no temp
 
 
-def test_cli_round_robin_rejects_duplicate_agents() -> None:
-    with pytest.raises(ValueError, match="appears more than once"):
-        main(["round-robin", "tictactoe", "--agents", "greedy", "greedy", "--games", "4"])
+def test_cli_round_robin_rejects_duplicate_agents(capsys) -> None:
+    rc = main(["round-robin", "tictactoe", "--agents", "greedy", "greedy", "--games", "4"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "appears more than once" in err
 
 
-def test_cli_round_robin_rejects_single_agent() -> None:
-    with pytest.raises(ValueError, match="at least two"):
-        main(["round-robin", "tictactoe", "--agents", "greedy", "--games", "4"])
+def test_cli_round_robin_rejects_single_agent(capsys) -> None:
+    rc = main(["round-robin", "tictactoe", "--agents", "greedy", "--games", "4"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "at least two" in err
 
 
-def test_cli_round_robin_rejects_human() -> None:
-    with pytest.raises(ValueError, match="human"):
-        main(["round-robin", "tictactoe", "--agents", "human", "random", "--games", "4"])
+def test_cli_round_robin_rejects_human(capsys) -> None:
+    rc = main(["round-robin", "tictactoe", "--agents", "human", "random", "--games", "4"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "human" in err

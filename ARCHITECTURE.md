@@ -179,6 +179,15 @@ Three design rules shape everything below:
   `replay.py` when the game is loadable (inferred from the log, or `--game`),
   and otherwise falls back to the result/`final_render` stored in the log so a
   log of a game absent from this repo still summarizes from JSON alone.
+  `main()` is also the CLI's error boundary: an exception escaping a
+  subcommand is by construction a setup problem — a bad spec, param, or
+  config (runtime game/agent failures are contained per-match by the engine,
+  tournament, and benchmark) — so it prints a one-line `error: <Type>: <msg>`
+  to stderr and exits 2, matching the bad-spec exit code the check-* commands
+  already used, instead of dumping a traceback (`AI_ARENA_DEBUG=1` restores
+  the traceback). An unhandled Ctrl-C exits 130 (`interrupted`; benchmark and
+  round-robin still contain their own interrupts and report partial results),
+  and a broken stdout pipe (`... | head`) exits 141 silently.
 - `gui.py` — generic Tkinter board GUI for live matches and log replay.
 - `replay.py` — rebuilds the state sequence from a match log's move history;
   falls back to the engine's recorded result for forfeit endings that game
