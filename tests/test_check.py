@@ -183,6 +183,19 @@ def test_non_terminating_game_caught() -> None:
     assert not report.ok
 
 
+def test_ending_exactly_on_the_cap_is_not_miscounted() -> None:
+    # A game that becomes terminal on the move applied at the very last permitted
+    # turn must be counted as its real ending, not as "max_turns". The playout
+    # loop checks `terminal` only *before* each move, so with max_turns == n the
+    # _Counter's draw lands exactly on the cap; without the post-loop terminal
+    # re-check it would be logged as a non-termination and wrongly FAIL
+    # playout/terminates (this mirrors the engine's own max_turns boundary fix).
+    report = check_game(_Counter(n=4), playouts=5, max_turns=4, seed=1)
+    assert report.endings == {"draw": 5}
+    assert _status(report, "playout/terminates") == PASS
+    assert report.ok
+
+
 class _LegalApplyMismatch(_Counter):
     name = "mismatch"
 

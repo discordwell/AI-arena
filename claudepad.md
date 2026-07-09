@@ -2,6 +2,48 @@
 
 ## Session Summaries
 
+### 2026-07-09 ~UTC — Fix engine off-by-one: score the decisive move that lands on the max_turns cap
+- BUG (core engine, `engine.py::play_match`): the terminal check ran only at the *start*
+  of each loop iteration, so the state produced by the move applied on the `max_turns`-th
+  ply was never evaluated — the loop just fell through to `finish(None, "max_turns", ...)`.
+  A decisive final move that lands exactly on the cap (a win, or a rules-draw such as a
+  filled tic-tac-toe board) was silently mis-scored as an artificial `max_turns` draw
+  (`winner=None`). Repro: `play_match(ttt, Scripted([0,1,2]), Scripted([3,4]), max_turns=5)`
+  → was `None/max_turns`, now `0/win`; the same win with `max_turns=10` was always correct
+  (a later iteration checked terminal). Only bites when the engine's `max_turns` is the
+  binding cap (tight `--max-turns` on play/gui/benchmark, or a game whose natural length
+  equals the cap); the arena games self-terminate via their own ply caps (50/50/30) far
+  below the 10k default, so tournaments were unaffected — but any caller passing a small
+  cap could get a wrong winner/reason at the boundary.
+- FIX: after the loop, `final = game.terminal(state)`; if terminal, `finish(final.winner,
+  final.reason, max_turns)`, else the existing `max_turns` cutoff. `turns == max_turns` in
+  both branches (every permitted move was applied). One extra `terminal()` call per
+  *truncated* match only (the normal path returns inside the loop). No new try/except —
+  consistent with the loop-top `terminal()` call, which the engine already trusts not to
+  raise (tournament/benchmark contain a raising game as a match_error).
+- CROSS-CHECK: the live GUI (`gui.py::_step_live`) already had the correct pattern —
+  `_is_match_over()` evaluates `game.terminal(states[-1])` (line ~848) *before* the
+  `max_turns` override (line ~883), so its override only fires on a genuinely non-terminal
+  state. The fix makes headless `play_match` agree with the GUI.
+- SAME BUG IN check.py (found by the post-fix code review): `_run_playouts`' random
+  self-play `for _turn in range(cap): ... else: outcome = "max_turns"` had the identical
+  pattern — a playout that ends on its cap-th move was logged "max_turns", spuriously
+  inflating the bucket that drives `playout/terminates` (WARN, or FAIL if every game does
+  it). Fixed the `else` to re-check `terminal` on the final state, mirroring the loop body
+  (error/shape/mutation tracked the same way) before recording a non-termination. Proven:
+  old loop scores `_Counter(4)` at cap=4 as "max_turns"; fixed → "draw".
+- TESTS (307→312): tests/test_engine.py +4 — `test_decisive_win_on_the_final_permitted_turn_is_scored`,
+  `test_rules_draw_on_the_final_permitted_turn_is_scored`, `test_max_turns_cutoff_on_a_live_game`
+  (genuine non-terminal cutoff still → max_turns), `test_no_legal_moves_forfeits` (the
+  engine's no-legal-moves forfeit had no *direct* engine test — only indirect via Caldera;
+  added a 4-line game double `_NoMovesForP1Game`; new `ScriptedAgent` helper). tests/test_check.py
+  +1 — `test_ending_exactly_on_the_cap_is_not_miscounted` (`_Counter(n=4)` at max_turns=4 →
+  draw, terminates PASS). Docs: ARCHITECTURE.md engine + check.py bullets.
+- REVIEW: two subagent verifiers (correctness + caller/test-impact) both CONFIRMED the engine
+  change is correct, no caller depends on the old behavior (cli/benchmark/tournament classify
+  by `winner is None`, not the reason string; GUI & check.py have their own loops), and the
+  4 new engine tests trace correctly. The check.py gap was the one actionable review finding.
+
 ### 2026-07-01 ~UTC — Add `check-agent`: pre-flight conformance checker for agents
 - New in `src/ai_arena/check.py` (same module as check-game — it owns the conformance
   family): `check_agent(agent_factory, game_factory, *, games=2, max_turns, seed, label)`

@@ -191,6 +191,18 @@ def play_match(
 
         player = 1 - player
 
+    # The loop applied `max_turns` moves without the pre-move terminal check
+    # ever firing on the resulting state. Evaluate the state the final move
+    # produced before declaring the cap: a decisive last move -- a win, or a
+    # rules-draw such as a filled board -- lands exactly here, and must be
+    # scored as that real outcome, not silently overwritten by an artificial
+    # "max_turns" cutoff. (The live GUI already checks terminal before its own
+    # max_turns override; this makes the headless engine agree.) Only reached
+    # when the cap actually binds, so it costs one extra terminal() call per
+    # truncated match, never per move.
+    final = game.terminal(state)
+    if final.is_terminal:
+        return finish(final.winner, final.reason, max_turns)
     return finish(None, "max_turns", max_turns)
 
 

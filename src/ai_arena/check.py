@@ -401,7 +401,29 @@ def _run_playouts(
             state = nxt
             player = 1 - player
         else:
+            # The cap was reached with no in-loop break. The final applied move
+            # may itself have produced a terminal state -- this loop, like the
+            # engine's, checks `terminal` only *before* each move -- so a game
+            # that ends exactly on the cap would otherwise be miscounted as
+            # "max_turns" and spuriously trip playout/terminates. Evaluate that
+            # final state the same way the loop body does (error / shape /
+            # mutation tracked identically) before recording a non-termination.
             outcome = "max_turns"
+            fp = _fingerprint(state)
+            try:
+                t = game.terminal(state)
+            except Exception as e:
+                raised = raised or f"terminal(state) raised {type(e).__name__}: {e}"
+                outcome = "error"
+            else:
+                if fp is not None and not mutated and _fingerprint(state) != fp:
+                    mutated = "terminal(state) mutated its input state"
+                shape = _terminal_shape_issue(t)
+                if shape:
+                    bad_winner = bad_winner or shape
+                    outcome = "error"
+                elif t.is_terminal:
+                    outcome = "draw" if t.winner is None else f"win:{t.winner}"
 
         endings[outcome] = endings.get(outcome, 0) + 1
         ran += 1

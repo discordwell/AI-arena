@@ -33,9 +33,14 @@ Three design rules shape everything below:
   checks `terminal` before each move; forfeits the mover on `TimeoutError`
   ("timeout"), any other exception ("agent_error"), a move not present in
   `legal_moves` ("illegal_move"), or an empty legal-move list
-  ("no_legal_moves"). `MatchResult.turns` counts successfully applied moves
-  on every path; a forfeited attempt is recorded in `move_history` (with a
-  `note`) but not counted. Records per-move timing and can write a full JSON
+  ("no_legal_moves"). When the `max_turns` cap binds it re-checks `terminal`
+  on the state the final permitted move produced before declaring the cutoff,
+  so a decisive last move (a win, or a rules-draw such as a filled board)
+  landing exactly on the cap is scored as that real outcome rather than a bogus
+  `max_turns` draw — matching the live GUI, which already checked terminal
+  before its own `max_turns` override. `MatchResult.turns` counts successfully
+  applied moves on every path (so `max_turns` on the cap); a forfeited attempt
+  is recorded in `move_history` (with a `note`) but not counted. Records per-move timing and can write a full JSON
   match log (`result` + `final_state` + `final_render`). Per rule 3 the log
   is snapshotted as moves are applied with a stub result
   (`reason: "in_progress"`), throttled to ~1/s so fast agents don't make the
@@ -160,7 +165,10 @@ Three design rules shape everything below:
   never mutate their input (the contract every baseline agent + replay rely on,
   and the class of the old `Photon legal_moves` bug), `legal_moves`/`apply_move`
   agree, `terminal` returns a well-formed verdict (winner ∈ {None,0,1}), and the
-  game terminates under random play. Like the agents it never raises on a hostile
+  game terminates under random play. The playout loop mirrors the engine's turn
+  structure, including the same max_turns-boundary handling: a game that becomes
+  terminal on the move played at the cap is counted as its real ending, not as a
+  spurious `max_turns` non-termination. Like the agents it never raises on a hostile
   game — every game call (and attribute read) is wrapped, becoming a fail. Reuses
   `tournament._game_factory` to load the spec; CLI exit is 0 pass / 1 fail / 2
   unloadable-spec.
